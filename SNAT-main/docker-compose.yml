@@ -1,0 +1,71 @@
+services:
+  snat-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "${SNAT_WEB_BIND:-5000}:5000"
+    environment:
+      # 密钥一律从 .env 注入（见 .env.example）。未设置时 compose 直接报错退出，
+      # 杜绝带着已知弱口令/弱密钥上线。生成强值：openssl rand -hex 32
+      SNAT_ADMIN_PASSWORD: ${SNAT_ADMIN_PASSWORD:?请在 .env 设置 SNAT_ADMIN_PASSWORD (见 .env.example)}
+      SNAT_TOKEN_SECRET: ${SNAT_TOKEN_SECRET:?请在 .env 设置 SNAT_TOKEN_SECRET (见 .env.example)}
+      # 可选：集中托管 Flask session 密钥（不设则容器内自动生成并持久化到卷）
+      SNAT_SECRET_KEY: ${SNAT_SECRET_KEY:-}
+      FORCE_HTTPS: "${FORCE_HTTPS:-0}"
+      TRUST_PROXY: "${TRUST_PROXY:-0}"
+      WEB_HOST: "${WEB_HOST:-0.0.0.0}"
+      WEB_PORT: "5000"
+    volumes:
+      # 持久化 DB / secret_key / logs（首次启动从镜像内容生成）
+      - snat-web-data:/app/web
+      - ./data/backups:/data/backups
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  snat-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    restart: unless-stopped
+    network_mode: host
+    # 仅授予操作 iptables/转发所需的能力，去掉其余 root 能力，缩小爆炸半径。
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # 从 .env 注入强随机 token，未设置则 compose 报错退出（见 .env.example）。
+      AGENT_TOKEN: ${AGENT_TOKEN:?请在 .env 设置 AGENT_TOKEN (见 .env.example)}
+      DNS_REFRESH_INTERVAL: "60"
+      # 外网部署：把 AGENT_HOST 设成 WireGuard 内网 IP，让 Agent 只在隧道内监听。
+      AGENT_HOST: "${AGENT_HOST:-0.0.0.0}"
+      AGENT_PORT: "${AGENT_PORT:-8888}"
+      # 默认仅签名严格模式；仅当对接无法签名的老面板时才临时改 1。
+      AGENT_ALLOW_BEARER: "${AGENT_ALLOW_BEARER:-0}"
+      # 公网直连务必填面板出口 IP/网段做来源白名单（逗号分隔，支持 CIDR）；留空=仅靠签名。
+      AGENT_ALLOWED_IPS: "${AGENT_ALLOWED_IPS:-}"
+    volumes:
+      - ./data/agent:/var/lib/snat-agent
+      - ./logs:/var/log
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  snat-web-data:

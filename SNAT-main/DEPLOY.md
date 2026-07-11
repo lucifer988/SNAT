@@ -1,0 +1,136 @@
+# SNAT Manager 部署与加固指南（内网 / 外网）
+
+本文档对应一次安全加固改造，核心变化：
+
+1. **Agent 强制 HMAC 验签 + 防重放 + 常量时间比较** —— 面板下发的每个请求（含 GET）都带
+   `X-Timestamp` / `X-Signature`，Agent 校验签名与时间戳后才执行，杜绝静态 token 被重放/伪造。
+2. **面板所有调用统一签名** —— `agent_get` / `agent_post` 两个辅助函数，覆盖
+   list_rules / health / get_traffic / get_connections / add_rule / delete_rule / check_traffic_limit
+   等全部面板→Agent 调用。
+3. **生产用 gunicorn** —— 不再用 Flask 自带开发服务器。面板与 Agent 均为**单 worker + 多线程**
+   （进程内的登录锁定 / 限流 / 日志缓冲依赖单进程；Agent 还要避免多进程同改 iptables 与 DNS 线程丢失）。
+4. **监听地址可配** —— `AGENT_HOST` / `AGENT_PORT` 环境变量，外网部署绑定到 WireGuard 内网 IP。
+5. **命令执行健壮化** —— iptables/conntrack 缺失不再让 Agent 崩溃。
+
+> 同步（面板改 → Agent 跟着动）与上报（Agent 状态/流量/连接数 → 面板看到）的原有逻辑**完全保留**，
+> 改造只是在调用上加了签名头、在 Agent 上加了验签，对这两条链路是透明的。
+
+---
+
+## 一、内网部署（同一可信内网 / VPC）
+
+最简单。面板和 Agent 在同一可信网段，直接用内网 IP 即可。
+
+```bash
+# 面板机
+sudo ./install.sh --type web --mode 1          # 模式1：监听 0.0.0.0:5000，建议再配 IP 白名单
+# Agent 机
+sudo ./install.sh --type agent --port 8888
+```
+
+签名机制在内网同样生效（防止内网横向重放）。无需 WireGuard。
+
+---
+
+## 二、外网部署（跨机房 / 公网，**推荐 WireGuard**）
+
+明文 HTTP 在公网上，**即使加了签名，token 和转发规则内容仍会被嗅探**——这是协议层堵不住的，
+所以外网必须有传输层加密。用自带的 `wireguard_setup.sh` 把面板↔Agent 套进隧道：
+
+### 1) 面板机（hub，需有公网 IP + 放行一个 UDP 端口）
+```bash
+sudo ./wireguard_setup.sh hub 51820 10.66.66.1
+# 记下输出的 [hub 公钥] 和 [公网IP:51820]
+```
+
+### 2) 每台 Agent 机（spoke）
+```bash
+sudo ./wireguard_setup.sh agent <hub公网IP> <hub公钥> 10.66.66.2 51820
+# 记下输出的 [Agent 公钥]
+```
+
+### 3) 回到面板机，把每台 Agent 注册进隧道
+```bash
+sudo ./wireguard_setup.sh add-peer hk-node-1 <Agent公钥> 10.66.66.2
+```
+
+### 4) 让 Agent 只在隧道内监听（关键）
+编辑 `/etc/systemd/system/snat-agent.service`：
+```ini
+Environment="AGENT_HOST=10.66.66.2"
+```
+```bash
+systemctl daemon-reload && systemctl restart snat-agent
+```
+这样 Agent 的端口**完全不暴露在公网**，只能从隧道内（即面板）访问。
+
+### 5) 在面板里添加服务器
+- 地址：填 Agent 的 **WG 内网 IP**（`10.66.66.2`），而不是公网 IP
+- 端口：照旧（如 8888）
+- Token：安装 Agent 时生成的强 token
+
+> 替代方案：若你已有自己的内网/IPsec/Tailscale，跳过 1–4，直接用对端内网 IP，并用云防火墙
+> 把 Agent 端口只放行给面板 IP 即可。
+
+---
+
+## 三、迁移与「仅签名」严格模式
+
+为了**不中断已在跑的转发**，Agent 默认 `AGENT_ALLOW_BEARER=1`：既接受新面板的签名请求，
+也兼容尚未升级的旧面板的 Bearer 请求（会打 WARNING 日志）。
+
+升级顺序建议：
+1. 先 `update.sh` 升级所有 **Agent**（此时同时兼容新旧面板）。
+2. 再 `update.sh` 升级 **面板**（升级后面板一律发签名）。
+3. 全部就绪后，把每台 Agent 的 `AGENT_ALLOW_BEARER` 改成 `0` 并重启，进入**仅签名严格模式**：
+   ```ini
+   Environment="AGENT_ALLOW_BEARER=0"
+   ```
+   ```bash
+   systemctl daemon-reload && systemctl restart snat-agent
+   ```
+
+`update.sh` 会自动：安装 gunicorn、把旧的 `python3 ...` systemd 单元改写成 gunicorn、
+并从旧 `agent.py` 里恢复你原来的自定义监听端口（写进 `AGENT_PORT`，避免被重置回 8888）。
+
+---
+
+## 四、相关环境变量速查
+
+| 变量 | 端 | 默认 | 说明 |
+|------|----|------|------|
+| `AGENT_HOST` | Agent | `0.0.0.0` | 监听地址。外网务必设为 WG 内网 IP |
+| `AGENT_PORT` | Agent | `8888` | 监听端口 |
+| `AGENT_ALLOW_BEARER` | Agent | `1` | 迁移期兼容旧 Bearer；完成后设 `0` |
+| `AGENT_SIGNED_REQUEST_TTL` | Agent | `300` | 签名有效期（秒），防重放窗口 |
+| `AGENT_TOKEN` | Agent | 无（必填） | 与面板共享的密钥，签名与认证的根 |
+| `AGENT_TARGET_ALLOW_ALL` | Agent | `0` | 置 1 可放行任意 DNAT 目标（含链路本地/元数据）。默认拒绝 169.254/fe80 |
+| `AGENT_TARGET_DENY_CIDRS` | Agent | 空 | 追加禁止的 DNAT 目标网段（逗号分隔 CIDR），如想连私网也禁可加 `10.0.0.0/8` 等 |
+| `AGENT_SET_FORWARD_POLICY_ACCEPT` | Agent | `1` | 置 0 不再把 FORWARD 默认策略设为 ACCEPT，仅放行受管流，避免本机变开放转发 |
+| `SNAT_SECRET_KEY` | 面板 | 无 | Flask session 密钥；不设则落盘到 `.secret_key`。设置后可集中托管/轮换 |
+| `WEB_MAX_CONTENT_LENGTH` | 面板 | `4194304` | 请求体大小上限（字节），防超大 import body 撑爆单进程 |
+| `SNAT_TOKEN_SECRET` | 面板 | 无（生产必填） | Agent token 落库加密密钥 |
+| `FORCE_HTTPS` / `TRUST_PROXY` | 面板 | `0` | 反代/公网面板时开启 |
+
+---
+
+## 五、面板侧 HTTPS 反代（公网面板必做）
+
+面板按**模式 2**安装（监听 `127.0.0.1:5000`，`FORCE_HTTPS=1`，`TRUST_PROXY=1`），前面套反代终止 TLS：
+
+```bash
+sudo ./install.sh --type web --mode 2
+```
+
+现成配置在 `reverse-proxy/`：
+- `Caddyfile.example` —— Caddy，自动签发/续期 Let's Encrypt，最省心。
+- `nginx-snat.conf.example` —— nginx + certbot。
+
+> 本次已修复一个反代相关的隐患：`TRUST_PROXY=1` 时面板会用 `ProxyFix` 读取 `X-Forwarded-For`
+> 还原真实客户端 IP。否则限流 / 登录锁定 / IP 白名单都会把所有人当成代理本机（127.0.0.1）。
+> 反代务必传 `X-Forwarded-For` 与 `X-Forwarded-Proto`（两份示例配置都已带上）。
+
+## 六、其它运维加固
+
+- 云安全组：Agent 的 WG UDP 端口仅放行必要来源；Agent 业务端口不对公网开放。
+- 定期轮换 `AGENT_TOKEN`（面板里更新该服务器 token 即可，会自动用 enc2 加密落库）。

@@ -1,0 +1,30 @@
+# SNAT Manager 面板 HTTPS 反代 —— Caddy（最省心，自动签发并续期 Let's Encrypt 证书）
+#
+# 用法：
+#   1) 面板按「模式 2」安装：监听 127.0.0.1:5000，FORCE_HTTPS=1，TRUST_PROXY=1
+#        sudo ./install.sh --type web --mode 2
+#   2) 装 Caddy： https://caddyserver.com/docs/install
+#   3) 把本文件内容写进 /etc/caddy/Caddyfile（域名换成你的），然后：
+#        sudo systemctl reload caddy
+#   4) 确保域名 A 记录指向本机，且云防火墙放行 80/443
+#
+# Caddy 的 reverse_proxy 会自动带上 X-Forwarded-Proto / X-Forwarded-For，
+# 面板侧 TRUST_PROXY=1 + ProxyFix 会据此识别 HTTPS 与真实客户端 IP。
+
+your-domain.com {
+    encode gzip
+
+    # 仅给面板用，限制请求体（转发管理接口不需要大 body）
+    request_body {
+        max_size 2MB
+    }
+
+    reverse_proxy 127.0.0.1:5000
+
+    # 可选：HSTS（确认全站 HTTPS 后再开）
+    # header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    log {
+        output file /var/log/caddy/snat.log
+    }
+}

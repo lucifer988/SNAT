@@ -1,0 +1,43 @@
+# SNAT Agent 公网直连 —— 可选的 HTTPS 反代（Caddy 自动签发/续期 Let's Encrypt 证书）
+#
+# 适用场景：Agent 有公网 IP，你不想用 WireGuard 隧道、想让面板直接对接，
+# 但又希望面板↔Agent 的链路是加密的（避免规则内容在公网明文可见）。
+#
+# 说明：
+#   * Agent 自身的鉴权靠 HMAC 签名，token 不会出现在链路明文里，即便走 HTTP 也不会泄露 token；
+#     但转发规则(目标 IP/端口)等业务内容仍是明文。加一层 HTTPS 可把整条链路加密。
+#   * 加了 HTTPS 反代后，面板里该服务器请填域名 + 443 端口（而不是 IP + 8888）。
+#
+# 部署步骤：
+#   1) Agent 只监听本机回环：把 systemd 里 AGENT_HOST 改成 127.0.0.1，并重启 snat-agent。
+#        sudo sed -i 's/AGENT_HOST=0.0.0.0/AGENT_HOST=127.0.0.1/' /etc/systemd/system/snat-agent.service
+#        sudo systemctl daemon-reload && sudo systemctl restart snat-agent
+#      这样 8888 端口不再对公网开放，只有本机的 Caddy 能连它。
+#   2) 装 Caddy：https://caddyserver.com/docs/install
+#   3) 本文件写进 /etc/caddy/Caddyfile（域名换成解析到本机的域名），reload caddy。
+#   4) 云防火墙放行 443（可关掉 8888 的公网放行）。
+#   5) 面板"添加服务器"填：地址 = agent.your-domain.com，端口 = 443。
+#      注意：面板当前按 http:// 拼接 Agent URL；若要走 443/HTTPS，需在面板侧把该服务器的
+#      port 设为 443，并确认反代证书有效（见 DEPLOY.md 的"公网直连 + HTTPS"章节）。
+#
+# 额外加固：把 @panel 的来源 IP 限制成面板出口 IP，双重保险（Agent 侧 AGENT_ALLOWED_IPS 亦可）。
+
+agent.your-domain.com {
+    encode gzip
+
+    # 只放行面板出口 IP（把 203.0.113.10 换成你面板服务器的公网出口 IP）
+    @panel {
+        remote_ip 203.0.113.10
+    }
+    handle @panel {
+        reverse_proxy 127.0.0.1:8888
+    }
+    # 其它来源一律拒绝
+    handle {
+        respond "Forbidden" 403
+    }
+
+    log {
+        output file /var/log/caddy/snat-agent.log
+    }
+}
