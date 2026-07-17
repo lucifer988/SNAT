@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300">
+  <!-- 身体 -->
+  <ellipse cx="100" cy="220" rx="50" ry="70" fill="#E8D5C4"/>
+  
+  <!-- 头部 -->
+  <circle cx="100" cy="100" r="55" fill="#FFE5D9"/>
+  
+  <!-- 头发 -->
+  <path d="M 50 90 Q 45 50 70 40 Q 100 30 130 40 Q 155 50 150 90" fill="#8B6F47"/>
+  <ellipse cx="75" cy="70" rx="20" ry="30" fill="#8B6F47"/>
+  <ellipse cx="125" cy="70" rx="20" ry="30" fill="#8B6F47"/>
+  
+  <!-- 鹿角 -->
+  <path d="M 70 50 L 60 30 L 55 35 M 60 30 L 65 20" stroke="#8B6F47" stroke-width="3" fill="none"/>
+  <path d="M 130 50 L 140 30 L 145 35 M 140 30 L 135 20" stroke="#8B6F47" stroke-width="3" fill="none"/>
+  
+  <!-- 眼睛 -->
+  <ellipse cx="85" cy="95" rx="8" ry="12" fill="#000"/>
+  <ellipse cx="115" cy="95" rx="8" ry="12" fill="#000"/>
+  <circle cx="87" cy="92" r="3" fill="#FFF"/>
+  <circle cx="117" cy="92" r="3" fill="#FFF"/>
+  
+  <!-- 腮红 -->
+  <ellipse cx="65" cy="105" rx="12" ry="8" fill="#FFB6C1" opacity="0.6"/>
+  <ellipse cx="135" cy="105" rx="12" ry="8" fill="#FFB6C1" opacity="0.6"/>
+  
+  <!-- 嘴巴 -->
+  <path d="M 90 115 Q 100 120 110 115" stroke="#FF69B4" stroke-width="2" fill="none"/>
+  
+  <!-- 衣服装饰 -->
+  <path d="M 60 160 Q 100 170 140 160" stroke="#90EE90" stroke-width="4" fill="none"/>
+  <circle cx="80" cy="180" r="5" fill="#90EE90"/>
+  <circle cx="100" cy="185" r="5" fill="#90EE90"/>
+  <circle cx="120" cy="180" r="5" fill="#90EE90"/>
+  
+  <!-- 手 -->
+  <ellipse cx="50" cy="200" rx="15" ry="25" fill="#FFE5D9"/>
+  <ellipse cx="150" cy="200" rx="15" ry="25" fill="#FFE5D9"/>
+</svg>
