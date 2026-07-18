@@ -168,6 +168,36 @@ class Round7WebTests(unittest.TestCase):
         self.assertEqual(enabled, 1)
         self.assertEqual(status, 'desynced')
 
+    def test_sync_over_limit_delete_failure_does_not_fake_disable(self):
+        sid = self._server()
+        conn = sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute("""INSERT INTO rules
+                     (server_id,local_port,target_ip,target_port,enabled,status,
+                      traffic_limit_gb,traffic_used_bytes)
+                     VALUES(?,12345,'1.2.3.4',80,1,'active',1,?)""",
+                  (sid, 2 * 1024 ** 3))
+        rid = c.lastrowid
+        conn.commit(); conn.close()
+        class GetResp:
+            status_code = 200
+            def json(self):
+                return {'12345': {'target_ip':'1.2.3.4','target_port':80}}
+        class DeleteResp:
+            status_code = 500
+            def json(self):
+                return {'success': False, 'verified': False}
+        with patch.object(webapp, 'agent_get', return_value=GetResp()), \
+             patch.object(webapp, 'agent_post', return_value=DeleteResp()):
+            result = webapp.sync_server_rules(sid)
+        self.assertTrue(any(item['status'] == 'delete_failed' for item in result))
+        conn = sqlite3.connect(webapp.DB_FILE)
+        enabled, status = conn.execute(
+            'SELECT enabled,status FROM rules WHERE id=?', (rid,)).fetchone()
+        conn.close()
+        self.assertEqual(enabled, 1)
+        self.assertEqual(status, 'desynced')
+
     def test_telegram_commands_default_to_disabled(self):
         source = (ROOT / 'web/app.py').read_text()
         settings = (ROOT / 'web/blueprints/settings.py').read_text()

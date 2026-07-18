@@ -1613,16 +1613,8 @@ def sync_server_rules(server_id, log_prefix=''):
         and int(rule.get('traffic_used_bytes', 0) or 0)
         >= int(rule.get('traffic_limit_gb', 0)) * 1024 ** 3
     ]
-    if over_limit_rules:
-        conn = sqlite3.connect(DB_FILE, timeout=10)
-        c = conn.cursor()
-        c.executemany(
-            "UPDATE rules SET enabled=0,status='active' WHERE id=?",
-            [(rule['id'],) for rule in over_limit_rules],
-        )
-        conn.commit()
-        conn.close()
     over_limit_ids = {rule['id'] for rule in over_limit_rules}
+    over_limit_by_port = {str(rule['local_port']): rule for rule in over_limit_rules}
     desired_rules = [rule for rule in enabled_rules if rule['id'] not in over_limit_ids]
 
     token = decrypt_token(server['token'])
@@ -1710,10 +1702,22 @@ def sync_server_rules(server_id, log_prefix=''):
         del_resp, del_err = _retry_agent_call(lambda pk=port_key: _do_delete(pk))
         if del_err is not None:
             results.append({'local_port': int(port_key), 'status': 'delete_error', 'error': str(del_err)})
+            if port_key in over_limit_by_port:
+                failed_rule_ids.add(over_limit_by_port[port_key]['id'])
         elif _agent_confirmed(del_resp):
             results.append({'local_port': int(port_key), 'status': 'deleted'})
+            if port_key in over_limit_by_port:
+                rule_id = over_limit_by_port[port_key]['id']
+                conn = sqlite3.connect(DB_FILE, timeout=10)
+                c = conn.cursor()
+                c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?", (rule_id,))
+                conn.commit()
+                conn.close()
+                succeeded_rule_ids.add(rule_id)
         else:
             results.append({'local_port': int(port_key), 'status': 'delete_failed', 'http': del_resp.status_code})
+            if port_key in over_limit_by_port:
+                failed_rule_ids.add(over_limit_by_port[port_key]['id'])
 
     # 2) 替换 (delete+add)
     for rule in to_replace:
