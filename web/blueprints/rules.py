@@ -109,6 +109,7 @@ def rules():
             _app.log_event('ERROR', f"规则 {rule_id} 同步失败，已回滚数据库: {failed}")
             return jsonify({'success': False, 'error': 'Agent 全量同步失败', 'details': failed}), 502
 
+        _app.audit_log('add_rule', f"{server['name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
         return jsonify({'success': True, 'id': rule_id})
     except Exception as e:
         _rollback_rule(rule_id)
@@ -205,6 +206,7 @@ def update_or_delete_rule(rule_id):
         conn.commit()
         conn.close()
         _app.log_event('INFO', f"更新规则 {rule_id}: {data['local_port']} -> {data['target_ip']}:{data['target_port']}")
+        _app.audit_log('update_rule', f"id={rule_id}", 'success', f"{data['local_port']} -> {data['target_ip']}:{data['target_port']}")
         _app.sync_server_rules(rule['server_id'], log_prefix=f'[编辑] 服务器 {rule["server_id"]}')
         return jsonify({'success': True})
 
@@ -245,6 +247,7 @@ def update_or_delete_rule(rule_id):
     failed = [item for item in sync_results if item.get('status') not in _app.SYNC_OK_STATUSES]
     if failed:
         return jsonify({'success': False, 'error': '删除后全量同步失败', 'details': failed}), 502
+    _app.audit_log('delete_rule', f"id={rule_id}:{rule['local_port']}", 'success', f"-> {rule['target_ip']}:{rule['target_port']}")
     return jsonify({'success': True})
 
 
@@ -303,6 +306,7 @@ def toggle_rule(rule_id):
     conn.close()
 
     _app.log_event('INFO', f"规则 {rule_id} 状态已更新为 {new_enabled}")
+    _app.audit_log('toggle_rule', f"id={rule_id}:{rule['local_port']}", 'success', '启用' if new_enabled else '停用')
     _app.sync_server_rules(rule['server_id'], log_prefix=f'[切换] 服务器 {rule["server_id"]}')
     return jsonify({'success': True, 'enabled': new_enabled})
 
@@ -352,6 +356,7 @@ def bulk_rules():
     conn.commit()
     conn.close()
     _app.log_event('INFO', f'批量规则操作 {action}: 成功 {len(affected)} 条, 失败 {len(failed)} 条')
+    _app.audit_log('bulk_rules', str(action), 'success' if not failed else 'warning', f'成功 {len(affected)} 失败 {len(failed)}')
     return jsonify({'success': True, 'affected': affected, 'failed': failed})
 
 

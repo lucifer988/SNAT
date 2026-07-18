@@ -1329,16 +1329,17 @@ def _check_servers_once():
         conn.commit()
         conn.close()
         if status != prev:
+            _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             if status in ('offline', 'token_invalid'):
                 telegram_notify(
-                    f'⚠️ SNAT服务器异常\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: {status}',
+                    f'⚠️ SNAT服务器异常\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: {status}\n时间: {_now}',
                     dedupe_key=f'server:{server["id"]}:{status}',
                     cooldown_seconds=max(60, _setting_int('alert_offline_seconds', 300)),
                     enabled=True
                 )
             elif prev in ('offline', 'token_invalid') and status == 'online':
                 telegram_notify(
-                    f'✅ SNAT服务器恢复\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: online',
+                    f'✅ SNAT服务器恢复\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: online\n时间: {_now}',
                     dedupe_key=f'server-recover:{server["id"]}',
                     cooldown_seconds=30,
                     enabled=True
@@ -1388,7 +1389,7 @@ def _check_traffic_once():
                     else: c.execute("UPDATE rules SET status='desynced' WHERE id=?",(rule['id'],))
                     conn.commit(); conn.close()
                     telegram_notify(
-                        f'🚨 SNAT规则流量超限\n节点: {rule["server_name"]}\n端口: {rule["local_port"]}\n目标: {rule["target_ip"]}:{rule["target_port"]}\n已用: {format(total_bytes / (1024 ** 3), ".2f")} GB\n限制: {rule["traffic_limit_gb"]} GB',
+                        f'🚨 SNAT规则流量超限\n节点: {rule["server_name"]}\n端口: {rule["local_port"]}\n目标: {rule["target_ip"]}:{rule["target_port"]}\n已用: {format(total_bytes / (1024 ** 3), ".2f")} GB\n限制: {rule["traffic_limit_gb"]} GB\n处置: {"已自动停用该规则" if stopped else "停用未确认，已标记 desynced 需人工处理"}',
                         dedupe_key=f'traffic-limit:{rule["id"]}',
                         cooldown_seconds=3600,
                         enabled=_setting_bool('tg_enable_limit_alerts', '1')
