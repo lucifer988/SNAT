@@ -1025,8 +1025,22 @@ def audit_log(action, target='', status='success', detail=''):
         c.execute('INSERT INTO audit_logs (username, client_ip, action, target, status, detail) VALUES (?, ?, ?, ?, ?, ?)',
                   (session.get('username', '-'), request.remote_addr, action, target, status, detail))
         conn.commit(); conn.close()
-        if status == 'success' and _setting_bool('tg_enable_audit', '1'):
-            telegram_audit_event(f"用户: {session.get('username', '-')}\n动作: {action}\n目标: {target or '-'}\n详情: {detail or '-'}", dedupe_key=f'audit:{action}:{target}:{detail}')
+        # TG 推送策略：失败/被拒必推（安全相关：登录失败、二次认证失败、路径穿越拦截等）；
+        # 成功事件跳过例行低值动作（reauth 只是前置门槛，真正的敏感操作会各自产生审计）。
+        skip_success_actions = {'reauth'}
+        should_push = status != 'success' or action not in skip_success_actions
+        if should_push and _setting_bool('tg_enable_audit', '1'):
+            lines = [
+                f"用户: {session.get('username', '-')}",
+                f"动作: {action}",
+                f"目标: {target or '-'}",
+                f"结果: {'成功' if status == 'success' else status}",
+                f"来源: {request.remote_addr or '-'}",
+                f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            ]
+            if detail:
+                lines.append(f"详情: {detail}")
+            telegram_audit_event('\n'.join(lines), dedupe_key=f'audit:{action}:{target}:{detail}:{status}')
     except Exception as e:
         app.logger.warning(f'audit log failed: {e}')
 

@@ -277,6 +277,10 @@ install_agent() {
     log_info "安装 conntrack..."
     apt-get install -y conntrack 2>/dev/null || log_warn "conntrack 安装失败，将回退到 ss"
 
+    # systemd 沙箱（ProtectSystem=strict + ReadWritePaths）在服务启动前就要绑定该目录；
+    # 若宿主机上不存在，unit 会以 226/NAMESPACE 失败（ExecStartPre 的 mkdir 在命名空间内，太迟）。
+    install -d -o root -g root -m 0755 /var/lib/snat-agent
+
     if [ -z "$AGENT_TOKEN" ]; then
         read -s -p "请输入 Agent Token（留空自动生成）: " AGENT_TOKEN < /dev/tty
         echo
