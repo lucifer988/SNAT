@@ -961,7 +961,8 @@ def _recent_auth_ok(max_age=None):
         last = float(last)
     except (TypeError, ValueError):
         return False
-    return (time.time() - last) <= max_age
+    age = time.time() - last
+    return 0 <= age <= max_age
 
 
 def require_recent_auth(max_age=None):
@@ -994,8 +995,10 @@ def csv_safe_row(row):
     """阻止 Excel/LibreOffice 把不可信 CSV 单元格解释为公式。"""
     safe = {}
     for key, value in dict(row).items():
-        if isinstance(value, str) and value.startswith(('=', '+', '-', '@')):
-            value = "'" + value
+        if isinstance(value, str):
+            probe = value.lstrip(' \t\r\n')
+            if value.startswith(('\t', '\r', '\n')) or probe.startswith(('=', '+', '-', '@')):
+                value = "'" + value
         safe[key] = value
     return safe
 

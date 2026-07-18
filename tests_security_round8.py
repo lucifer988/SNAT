@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from web import app as webapp
 
@@ -95,6 +96,18 @@ class SecurityRound8Tests(unittest.TestCase):
         response = self.client.get('/api/export/servers')
         self.assertEqual(response.status_code, 200)
         self.assertIn("'=cmd", response.get_data(as_text=True))
+
+    def test_csv_export_neutralizes_formula_after_whitespace(self):
+        self.assertEqual(webapp.csv_safe_row({'x': '\t=1+1'})['x'], "'\t=1+1")
+        self.assertEqual(webapp.csv_safe_row({'x': ' \t=1+1'})['x'], "' \t=1+1")
+        self.assertEqual(webapp.csv_safe_row({'x': '\r=1+1'})['x'], "'\r=1+1")
+
+    def test_metrics_requires_correct_bearer_token(self):
+        with patch.dict(os.environ, {'SNAT_METRICS_TOKEN': 'm' * 32}):
+            self.assertEqual(self.client.get('/metrics').status_code, 401)
+            self.assertEqual(self.client.get('/metrics', headers={'Authorization': 'Basic bad'}).status_code, 401)
+            self.assertEqual(self.client.get('/metrics', headers={'Authorization': 'Bearer wrong'}).status_code, 401)
+            self.assertEqual(self.client.get('/metrics', headers={'Authorization': 'Bearer ' + 'm' * 32}).status_code, 200)
 
 
 if __name__ == '__main__':

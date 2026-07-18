@@ -11,7 +11,14 @@ if [ ! -f "/etc/systemd/system/snat-agent.service" ]; then
     exit 1
 fi
 
+if [ "$EUID" -ne 0 ]; then
+    echo "错误：请使用 sudo 运行"
+    exit 1
+fi
+
 TOKEN=$(sed -n 's/^AGENT_TOKEN="\(.*\)"$/\1/p' /etc/snat-manager/agent.env 2>/dev/null)
+TOKEN=${TOKEN//\\\"/\"}
+TOKEN=${TOKEN//\\\\/\\}
 
 if [ -n "$TOKEN" ]; then
     echo "Agent Token: $TOKEN"

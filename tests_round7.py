@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -115,9 +116,18 @@ class Round7WebTests(unittest.TestCase):
         os.environ['SNAT_ADMIN_PASSWORD'] = 'Admin12345'
         webapp.init_db()
         self.client = webapp.app.test_client()
+        sid = 'round7-test-session'
+        conn = sqlite3.connect(webapp.DB_FILE)
+        version = conn.execute("SELECT session_version FROM users WHERE username='admin'").fetchone()[0]
+        conn.execute(
+            'INSERT INTO web_sessions (id,username,session_version,expires_at) VALUES (?,?,?,?)',
+            (sid, 'admin', version, time.time() + 3600),
+        )
+        conn.commit(); conn.close()
         with self.client.session_transaction() as sess:
             sess.update(logged_in=True, username='admin', must_change_password=False,
-                        csrf_token='csrf', last_reauth=10**20)
+                        csrf_token='csrf', last_reauth=time.time(), session_id=sid,
+                        session_version=version)
 
     def tearDown(self):
         self.tmp.cleanup()

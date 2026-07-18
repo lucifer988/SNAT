@@ -22,6 +22,7 @@ if ! [[ "$REPO_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
     echo "错误：必须显式设置完整 SNAT_COMMIT_SHA，禁止自动追踪可变分支"
     exit 1
 fi
+REPO_COMMIT=${REPO_COMMIT,,}
 
 if ! command -v git >/dev/null 2>&1; then
     echo "[*] 安装 git..."
@@ -42,6 +43,10 @@ cp -r /opt/snat-manager "$BACKUP_DIR" || {
     exit 1
 }
 echo "备份保存在: $BACKUP_DIR"
+WEB_UNIT=/etc/systemd/system/snat-web.service
+AGENT_UNIT=/etc/systemd/system/snat-agent.service
+[ -f "$WEB_UNIT" ] && cp -a "$WEB_UNIT" "$BACKUP_DIR/snat-web.service"
+[ -f "$AGENT_UNIT" ] && cp -a "$AGENT_UNIT" "$BACKUP_DIR/snat-agent.service"
 
 rollback() {
     echo
@@ -49,6 +54,9 @@ rollback() {
     echo "[*] 正在回滚..."
     rm -rf /opt/snat-manager
     mv "$BACKUP_DIR" /opt/snat-manager
+    [ -f /opt/snat-manager/snat-web.service ] && mv /opt/snat-manager/snat-web.service "$WEB_UNIT"
+    [ -f /opt/snat-manager/snat-agent.service ] && mv /opt/snat-manager/snat-agent.service "$AGENT_UNIT"
+    systemctl daemon-reload 2>/dev/null || true
     systemctl restart snat-web snat-agent 2>/dev/null || true
     echo "✓ 已回滚到备份版本"
     exit 1
@@ -78,6 +86,9 @@ if [ -d "/opt/snat-manager/web" ]; then
     # 还原 DB 和 secret_key
     [ -f /tmp/snat_manager.db.upd ] && mv /tmp/snat_manager.db.upd /opt/snat-manager/web/snat_manager.db
     [ -f /tmp/.secret_key.upd ] && mv /tmp/.secret_key.upd /opt/snat-manager/web/.secret_key
+    if id -u snat-web >/dev/null 2>&1; then
+        chown -R snat-web:snat-web /opt/snat-manager/web
+    fi
 
     # 数据库迁移
     if [ -f "$WORK_DIR/migrate_db.sh" ]; then
@@ -86,7 +97,23 @@ if [ -d "/opt/snat-manager/web" ]; then
     fi
 
     # 升级 systemd unit 到 gunicorn（兼容历史的 app.py / -m web.app 两种 ExecStart）
-    WEB_UNIT=/etc/systemd/system/snat-web.service
+    # 迁移旧版 unit：秘密移入 0600 EnvironmentFile，Web 改为专用非 root 用户。
+    if [ -f "$WEB_UNIT" ] && ! grep -q '^EnvironmentFile=/etc/snat-manager/web.env' "$WEB_UNIT"; then
+        id -u snat-web >/dev/null 2>&1 || useradd --system --home /opt/snat-manager --shell /usr/sbin/nologin snat-web
+        install -d -o root -g root -m 0711 /etc/snat-manager
+        : > /etc/snat-manager/web.env
+        for key in APP_ENV FORCE_HTTPS TRUST_PROXY SNAT_SECRET_KEY SNAT_TOKEN_SECRET BACKUP_DIR WEB_HOST WEB_PORT; do
+            value=$(sed -n "s/^Environment=\"${key}=\(.*\)\"$/\1/p" "$WEB_UNIT" | head -1)
+            [ -n "$value" ] && printf '%s="%s"\n' "$key" "$value" >> /etc/snat-manager/web.env
+        done
+        chown snat-web:snat-web /etc/snat-manager/web.env
+        chmod 0600 /etc/snat-manager/web.env
+        sed -i -E '/^Environment="(APP_ENV|FORCE_HTTPS|TRUST_PROXY|SNAT_ADMIN_PASSWORD|SNAT_SECRET_KEY|SNAT_TOKEN_SECRET|BACKUP_DIR|WEB_HOST|WEB_PORT)=/d' "$WEB_UNIT"
+        sed -i '/^WorkingDirectory=/a EnvironmentFile=/etc/snat-manager/web.env' "$WEB_UNIT"
+        sed -i 's/^User=.*/User=snat-web/' "$WEB_UNIT"
+        grep -q '^Group=' "$WEB_UNIT" || sed -i '/^User=snat-web/a Group=snat-web' "$WEB_UNIT"
+        chown -R snat-web:snat-web /opt/snat-manager/web
+    fi
     if [ -f "$WEB_UNIT" ] && grep -q "ExecStart=/usr/bin/python3" "$WEB_UNIT" 2>/dev/null; then
         echo "[*] 升级 snat-web unit 到 gunicorn..."
         WEB_BIND=$(grep -oE 'WEB_HOST=[^"]+' "$WEB_UNIT" | head -1 | cut -d= -f2)
@@ -109,7 +136,7 @@ fi
 if [ -d "/opt/snat-manager/agent" ]; then
     echo "[*] 更新 Agent 客户端..."
 
-    AGENT_UNIT=/etc/systemd/system/snat-agent.service
+
     # 历史版本把监听端口 sed 进了源码 (app.run(port=NNNN))；新版本改用 AGENT_PORT 环境变量。
     # 先从备份的旧 agent.py 里把端口捞出来，避免更新后端口被重置为 8888。
     OLD_PORT=$(grep -oE 'port=[0-9]+' "$BACKUP_DIR/agent/agent.py" 2>/dev/null | tail -1 | cut -d= -f2)

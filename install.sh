@@ -57,6 +57,7 @@ if ! [[ "$REPO_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
     log_error "必须通过 SNAT_COMMIT_SHA 指定完整 40 位提交 SHA"
     exit 1
 fi
+REPO_COMMIT=${REPO_COMMIT,,}
 
 if [ -z "$INSTALL_TYPE" ]; then
     echo "请选择安装类型："
@@ -124,7 +125,8 @@ install_web() {
     ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD//\\/\\\\}; ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD_ENV//\"/\\\"}
 
     id -u snat-web >/dev/null 2>&1 || useradd --system --home /opt/snat-manager --shell /usr/sbin/nologin snat-web
-    install -d -o snat-web -g snat-web -m 0700 /etc/snat-manager /opt/snat-manager/web /var/backups/snat-manager
+    install -d -o root -g root -m 0711 /etc/snat-manager
+    install -d -o snat-web -g snat-web -m 0700 /opt/snat-manager/web /var/backups/snat-manager
     chown -R snat-web:snat-web /opt/snat-manager/web /var/backups/snat-manager
     cat > /etc/snat-manager/web.env <<EOF
 APP_ENV=production
@@ -283,7 +285,7 @@ install_agent() {
     case "$AGENT_TOKEN" in *$'\n'*|*$'\r'*) log_error "Agent Token 不能包含换行符"; exit 1;; esac
     AGENT_TOKEN_ENV=${AGENT_TOKEN//\\/\\\\}; AGENT_TOKEN_ENV=${AGENT_TOKEN_ENV//\"/\\\"}
 
-    install -d -o root -g root -m 0700 /etc/snat-manager
+    install -d -o root -g root -m 0711 /etc/snat-manager
     cat > /etc/snat-manager/agent.env <<EOF
 AGENT_TOKEN="${AGENT_TOKEN_ENV}"
 DNS_REFRESH_INTERVAL=60

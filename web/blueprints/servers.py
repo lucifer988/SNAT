@@ -120,6 +120,7 @@ def delete_server(server_id):
 
 @bp.route('/api/servers/<int:server_id>/check', methods=['GET'])
 @_app.login_required
+@_app.require_recent_auth()
 def check_server(server_id):
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -155,6 +156,7 @@ def check_server(server_id):
 
 @bp.route('/api/servers/bulk_check', methods=['POST'])
 @_app.login_required
+@_app.require_recent_auth()
 def bulk_check_servers():
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
