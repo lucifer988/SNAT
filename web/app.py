@@ -3,7 +3,7 @@
 """
 SNAT Manager - Web 管理端
 """
-from flask import Flask, request, jsonify, session, render_template, g
+from flask import Flask, request, jsonify, session, render_template, g, has_request_context
 import sqlite3
 import requests
 import json
@@ -24,6 +24,25 @@ from collections import defaultdict, deque
 from logging.handlers import RotatingFileHandler
 import logging
 from urllib.parse import urlsplit
+import threading
+from uuid import uuid4
+import sys
+
+# ---------------------------------------------------------------------------
+# 直接运行入口修复（python3 -m web.app / python3 web/app.py）
+# ---------------------------------------------------------------------------
+# 以 __main__ 身份执行时，blueprints 里的 `from web import app` 会把本文件当作
+# `web.app` 再完整导入一遍，两个半初始化副本互相 import 触发
+# "partially initialized module ... has no attribute 'bp'" 的循环导入崩溃
+# （此前只有 gunicorn 的 web.wsgi 入口能启动，开发/调试直跑必挂）。
+# 处理：
+#   1) `python3 web/app.py` 直跑文件时，把仓库根目录补进 sys.path，让 `web` 包可导入；
+#   2) 把当前 __main__ 模块登记为规范的 `web.app`，后续 import 一律复用本副本。
+if __name__ == '__main__':
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    sys.modules.setdefault('web.app', sys.modules['__main__'])
 
 
 # 是否在签名请求里仍附带 Authorization: Bearer <token>。
@@ -50,6 +69,8 @@ def build_agent_headers(token, method, path, body=''):
         'X-Nonce': nonce,
         'X-Signature': sig,
     }
+    if has_request_context() and getattr(g, 'request_id', ''):
+        headers['X-Request-ID'] = g.request_id
     if AGENT_SEND_BEARER:
         headers['Authorization'] = f'Bearer {token}'
     return headers
@@ -167,12 +188,24 @@ DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_manager
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_web.log')
 LOG_BUFFER_MAX = 500
 log_buffer = deque(maxlen=LOG_BUFFER_MAX)
+BACKUP_RETENTION = int(os.getenv('SNAT_BACKUP_RETENTION', '30'))
 
 # 配置日志（7天自动清理）
 handler = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=7)
 handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 app.logger.addHandler(handler)
 app.logger.setLevel(logging.INFO)
+
+
+class RequestIDFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = getattr(g, 'request_id', '-') if has_request_context() else '-'
+        return True
+
+
+for _h in app.logger.handlers:
+    _h.addFilter(RequestIDFilter())
+    _h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [req:%(request_id)s] %(message)s'))
 
 # 请求频率限制
 rate_limit_store = defaultdict(list)
@@ -439,7 +472,23 @@ def create_backup(reason='manual'):
             manifest['files'][label] = {'sha256': _sha256_file(dst), 'bytes': os.path.getsize(dst)}
     with open(os.path.join(backup_path, 'MANIFEST.json'), 'w') as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
+    _cleanup_old_backups()
     return backup_path
+
+
+def _cleanup_old_backups():
+    if BACKUP_RETENTION <= 0:
+        return
+    try:
+        items = [
+            os.path.join(BACKUP_DIR, name)
+            for name in sorted(os.listdir(BACKUP_DIR), reverse=True)
+            if os.path.isdir(os.path.join(BACKUP_DIR, name))
+        ]
+        for stale in items[BACKUP_RETENTION:]:
+            shutil.rmtree(stale, ignore_errors=True)
+    except Exception as e:
+        app.logger.warning(f'backup retention cleanup failed: {e}')
 
 
 def _backup_path_is_safe(candidate):
@@ -708,6 +757,7 @@ def before_request():
     """全局请求前检查"""
     # 为本次请求生成 CSP nonce，供模板内联 <script> 与 after_request 的 CSP 头共用。
     g.csp_nonce = secrets.token_urlsafe(16)
+    g.request_id = request.headers.get('X-Request-ID', '').strip() or uuid4().hex[:12]
     # SESSION_COOKIE_SECURE 启动时按 FORCE_HTTPS 环境变量固定，但 force_https 可在运行时切换。
     # 在此按运行时设置动态刷新该配置：Flask 在响应末尾 save_session 时会读取它决定是否打 Secure，
     # 从而消除"启动时 FORCE_HTTPS=0 → 运行时开启 HTTPS"期间 session cookie 仍走明文的窗口。
@@ -763,6 +813,7 @@ def after_request(response):
     # API 响应包含服务器列表/规则/审计日志等敏感数据，禁止任何缓存
     if request.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
+    response.headers.setdefault('X-Request-ID', getattr(g, 'request_id', '-'))
     return response
 
 # 登录失败记录（防暴力破解）
@@ -900,6 +951,8 @@ def audit_log(action, target='', status='success', detail=''):
         c.execute('INSERT INTO audit_logs (username, client_ip, action, target, status, detail) VALUES (?, ?, ?, ?, ?, ?)',
                   (session.get('username', '-'), request.remote_addr, action, target, status, detail))
         conn.commit(); conn.close()
+        if status == 'success' and _setting_bool('tg_enable_audit', '1'):
+            telegram_audit_event(f"用户: {session.get('username', '-')}\n动作: {action}\n目标: {target or '-'}\n详情: {detail or '-'}", dedupe_key=f'audit:{action}:{target}:{detail}')
     except Exception as e:
         app.logger.warning(f'audit log failed: {e}')
 
@@ -945,6 +998,328 @@ def send_alert(message):
         return resp.status_code < 300, f'http {resp.status_code}'
     except Exception as e:
         return False, str(e)
+
+
+def _setting_bool(key, default='0'):
+    return str(get_setting(key, default)).strip().lower() not in ('0', 'false', 'no', '')
+
+
+def _setting_int(key, default):
+    try:
+        return int(get_setting(key, str(default)) or default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def send_telegram_message(message, chat_id=None):
+    bot_token = get_secret_setting('tg_bot_token', '')
+    target_chat_id = str(chat_id or get_setting('tg_chat_id', '')).strip()
+    if not bot_token or not target_chat_id:
+        return False, 'tg bot not configured'
+    try:
+        resp = requests.post(
+            f'https://api.telegram.org/bot{bot_token}/sendMessage',
+            json={'chat_id': target_chat_id, 'text': message},
+            timeout=10
+        )
+        return resp.status_code < 300, f'http {resp.status_code}'
+    except Exception as e:
+        return False, str(e)
+
+
+def _telegram_dedupe_ok(key, cooldown_seconds=300):
+    if not key:
+        return True
+    now = int(time.time())
+    skey = f'tg_last_sent:{key}'
+    try:
+        last = int(get_setting(skey, '0') or '0')
+    except (TypeError, ValueError):
+        last = 0
+    if last and now - last < max(0, cooldown_seconds):
+        return False
+    set_setting(skey, str(now))
+    return True
+
+
+def telegram_notify(message, *, dedupe_key='', cooldown_seconds=300, enabled=True, chat_id=None):
+    if not enabled:
+        return False, 'disabled'
+    if not _telegram_dedupe_ok(dedupe_key, cooldown_seconds):
+        return False, 'deduped'
+    ok, detail = send_telegram_message(message, chat_id=chat_id)
+    if not ok:
+        app.logger.warning(f'telegram notify failed: {detail}')
+    return ok, detail
+
+
+def telegram_audit_event(message, dedupe_key=''):
+    return telegram_notify(
+        f'🧾 SNAT 审计\n{message}',
+        dedupe_key=dedupe_key,
+        cooldown_seconds=5,
+        enabled=_setting_bool('tg_enable_audit', '1')
+    )
+
+
+def _build_status_summary(limit_rules=8):
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT id, name, status, host, port FROM servers ORDER BY id')
+    servers = [dict(r) for r in c.fetchall()]
+    c.execute('''SELECT r.local_port, r.target_ip, r.target_port, r.enabled, r.traffic_used_bytes, r.traffic_limit_gb,
+                        r.active_connections, s.name AS server_name
+                 FROM rules r JOIN servers s ON r.server_id = s.id
+                 ORDER BY r.traffic_used_bytes DESC, r.id DESC LIMIT ?''', (limit_rules,))
+    top_rules = [dict(r) for r in c.fetchall()]
+    conn.close()
+    online = sum(1 for s in servers if s.get('status') == 'online')
+    offline = sum(1 for s in servers if s.get('status') == 'offline')
+    token_invalid = sum(1 for s in servers if s.get('status') == 'token_invalid')
+    lines = [
+        '📡 SNAT 当前状态',
+        f'服务器: {len(servers)} 台（在线 {online} / 离线 {offline} / Token异常 {token_invalid}）',
+    ]
+    if servers:
+        lines.append('')
+        lines.append('节点:')
+        for s in servers:
+            lines.append(f"- {s['name']}: {s['status']} ({s['host']}:{s['port']})")
+    if top_rules:
+        lines.append('')
+        lines.append('Top 规则:')
+        for r in top_rules:
+            used_gb = format(float(r.get('traffic_used_bytes', 0)) / (1024 ** 3), '.2f')
+            limit = r.get('traffic_limit_gb') or 0
+            limit_text = f'{limit} GB' if limit > 0 else '∞'
+            lines.append(f"- {r['server_name']}:{r['local_port']} -> {r['target_ip']}:{r['target_port']} | {used_gb}/{limit_text} | 连接 {r.get('active_connections', 0) or 0}")
+    return '\n'.join(lines)
+
+
+def _build_rules_summary(limit=20):
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('''SELECT r.local_port, r.target_ip, r.target_port, r.enabled, r.traffic_used_bytes, r.traffic_limit_gb,
+                        r.active_connections, s.name AS server_name
+                 FROM rules r JOIN servers s ON r.server_id = s.id
+                 ORDER BY s.name, r.local_port LIMIT ?''', (limit,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    if not rows:
+        return '📋 当前没有规则'
+    lines = [f'📋 规则列表（前 {len(rows)} 条）']
+    for r in rows:
+        used_gb = format(float(r.get('traffic_used_bytes', 0)) / (1024 ** 3), '.2f')
+        limit = r.get('traffic_limit_gb') or 0
+        limit_text = f'{limit} GB' if limit > 0 else '∞'
+        status = '启用' if r.get('enabled') else '禁用'
+        lines.append(f"- {r['server_name']}:{r['local_port']} -> {r['target_ip']}:{r['target_port']} | {status} | {used_gb}/{limit_text} | 连接 {r.get('active_connections', 0) or 0}")
+    return '\n'.join(lines)
+
+
+def _build_daily_summary():
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM servers')
+    servers_total = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM servers WHERE status = ?', ('online',))
+    servers_online = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM rules')
+    rules_total = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM rules WHERE enabled = 1')
+    rules_enabled = c.fetchone()[0]
+    c.execute('SELECT COALESCE(SUM(traffic_used_bytes), 0) FROM rules')
+    total_bytes = int(c.fetchone()[0] or 0)
+    c.execute('''SELECT r.local_port, r.target_ip, r.target_port, r.traffic_used_bytes, s.name AS server_name
+                 FROM rules r JOIN servers s ON r.server_id = s.id
+                 ORDER BY r.traffic_used_bytes DESC LIMIT 5''')
+    top = [dict(r) for r in c.fetchall()]
+    conn.close()
+    total_gb = format(total_bytes / (1024 ** 3), '.2f')
+    lines = [
+        '📊 SNAT 每日简报',
+        f'服务器: {servers_online}/{servers_total} 在线',
+        f'规则: {rules_enabled}/{rules_total} 启用',
+        f'累计流量: {total_gb} GB',
+    ]
+    if top:
+        lines.append('')
+        lines.append('Top 5 流量规则:')
+        for r in top:
+            used_gb = format(float(r.get('traffic_used_bytes', 0)) / (1024 ** 3), '.2f')
+            lines.append(f"- {r['server_name']}:{r['local_port']} -> {r['target_ip']}:{r['target_port']} | {used_gb} GB")
+    return '\n'.join(lines)
+
+
+def _process_telegram_command(text, chat_id):
+    cmd = (text or '').strip().split()[0].lower()
+    if cmd in ('/start', '/help'):
+        return send_telegram_message('可用命令：\n/status - 当前状态\n/rules - 规则列表\n/summary - 每日汇总\n/alerts - 检查异常告警', chat_id=chat_id)
+    if cmd == '/status':
+        return send_telegram_message(_build_status_summary(), chat_id=chat_id)
+    if cmd == '/rules':
+        return send_telegram_message(_build_rules_summary(), chat_id=chat_id)
+    if cmd == '/summary':
+        return send_telegram_message(_build_daily_summary(), chat_id=chat_id)
+    if cmd == '/alerts':
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute('SELECT name, status FROM servers WHERE status IN (?, ?) ORDER BY id DESC', ('offline', 'token_invalid'))
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        if not rows:
+            return send_telegram_message('✅ 当前没有离线或 Token 异常的服务器', chat_id=chat_id)
+        lines = ['⚠️ 当前异常服务器:'] + [f"- {r['name']}: {r['status']}" for r in rows]
+        return send_telegram_message('\n'.join(lines), chat_id=chat_id)
+    return send_telegram_message('未知命令，发送 /help 查看帮助。', chat_id=chat_id)
+
+
+def _telegram_polling_loop():
+    offset = 0
+    while True:
+        try:
+            if not _setting_bool('tg_command_enabled', '1'):
+                time.sleep(15)
+                continue
+            bot_token = get_secret_setting('tg_bot_token', '')
+            allowed_chat_id = str(get_setting('tg_chat_id', '')).strip()
+            if not bot_token:
+                time.sleep(15)
+                continue
+            resp = requests.get(
+                f'https://api.telegram.org/bot{bot_token}/getUpdates',
+                params={'timeout': 20, 'offset': offset + 1},
+                timeout=30
+            )
+            if resp.status_code >= 300:
+                time.sleep(10)
+                continue
+            payload = resp.json() or {}
+            for item in payload.get('result', []) or []:
+                offset = max(offset, int(item.get('update_id', 0) or 0))
+                message = item.get('message') or {}
+                text = (message.get('text') or '').strip()
+                chat_id = str((message.get('chat') or {}).get('id', '')).strip()
+                if not text.startswith('/'):
+                    continue
+                if allowed_chat_id and chat_id != allowed_chat_id:
+                    continue
+                _process_telegram_command(text, chat_id)
+        except Exception as e:
+            app.logger.warning(f'telegram polling loop error: {e}')
+            time.sleep(10)
+
+
+def _check_servers_once():
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT id, name, host, port, token, status FROM servers ORDER BY id')
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    for server in rows:
+        prev = server.get('status') or 'offline'
+        status = 'offline'
+        try:
+            resp = agent_get(f"http://{server['host']}:{server['port']}/health", decrypt_token(server['token']), timeout=3)
+            if resp.status_code == 200:
+                status = 'online'
+            elif resp.status_code == 401:
+                status = 'token_invalid'
+                mark_token_invalid(server['id'], 'background health 401')
+            else:
+                status = 'offline'
+        except Exception:
+            status = 'offline'
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        c = conn.cursor()
+        c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?', (status, server['id']))
+        conn.commit()
+        conn.close()
+        if status != prev:
+            if status in ('offline', 'token_invalid'):
+                telegram_notify(
+                    f'⚠️ SNAT服务器异常\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: {status}',
+                    dedupe_key=f'server:{server["id"]}:{status}',
+                    cooldown_seconds=max(60, _setting_int('alert_offline_seconds', 300)),
+                    enabled=True
+                )
+            elif prev in ('offline', 'token_invalid') and status == 'online':
+                telegram_notify(
+                    f'✅ SNAT服务器恢复\n节点: {server["name"]}\n地址: {server["host"]}:{server["port"]}\n状态: online',
+                    dedupe_key=f'server-recover:{server["id"]}',
+                    cooldown_seconds=30,
+                    enabled=True
+                )
+
+
+def _check_traffic_once():
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name
+                 FROM rules r JOIN servers s ON r.server_id = s.id
+                 WHERE r.enabled = 1''')
+    rule_rows = [dict(row) for row in c.fetchall()]
+    conn.close()
+    for rule in rule_rows:
+        try:
+            url = f"http://{rule['host']}:{rule['port']}/get_traffic/{rule['local_port']}"
+            resp = agent_get(url, decrypt_token(rule['token']), timeout=3)
+            if resp.status_code != 200:
+                continue
+            data = resp.json() or {}
+            current_counter = int(data.get('current_counter', 0) or 0)
+            total_bytes = int(data.get('bytes', current_counter) or 0)
+            conn = sqlite3.connect(DB_FILE, timeout=10)
+            c = conn.cursor()
+            c.execute(
+                'UPDATE rules SET traffic_used_bytes = ?, last_iptables_bytes = ?, last_agent_counter = ? WHERE id = ?',
+                (total_bytes, current_counter, current_counter, rule['id'])
+            )
+            conn.commit()
+            conn.close()
+            if int(rule.get('traffic_limit_gb', 0) or 0) > 0:
+                limit_bytes = int(rule['traffic_limit_gb']) * (1024 ** 3)
+                if total_bytes >= limit_bytes:
+                    telegram_notify(
+                        f'🚨 SNAT规则流量超限\n节点: {rule["server_name"]}\n端口: {rule["local_port"]}\n目标: {rule["target_ip"]}:{rule["target_port"]}\n已用: {format(total_bytes / (1024 ** 3), ".2f")} GB\n限制: {rule["traffic_limit_gb"]} GB',
+                        dedupe_key=f'traffic-limit:{rule["id"]}',
+                        cooldown_seconds=3600,
+                        enabled=_setting_bool('tg_enable_limit_alerts', '1')
+                    )
+        except Exception as e:
+            app.logger.warning(f'background traffic check failed for rule {rule.get("id")}: {e}')
+
+
+def _maybe_send_daily_summary():
+    if not _setting_bool('tg_enable_daily_summary', '1'):
+        return
+    now = datetime.now()
+    configured = (get_setting('tg_daily_summary_time', '09:00') or '09:00').strip()
+    today = now.strftime('%Y-%m-%d')
+    if now.strftime('%H:%M') != configured:
+        return
+    if get_setting('tg_daily_last_sent', '') == today:
+        return
+    ok, _detail = send_telegram_message(_build_daily_summary())
+    if ok:
+        set_setting('tg_daily_last_sent', today)
+
+
+def _background_ops_loop():
+    while True:
+        try:
+            _check_servers_once()
+            _check_traffic_once()
+            _maybe_send_daily_summary()
+        except Exception as e:
+            app.logger.warning(f'background ops loop error: {e}')
+        time.sleep(max(30, _setting_int('tg_background_interval_seconds', 60)))
 
 
 def init_log_buffer():
@@ -1380,6 +1755,8 @@ def bootstrap():
     init_log_buffer()
     init_db()
     _maybe_reencrypt_servers()
+    threading.Thread(target=_background_ops_loop, daemon=True).start()
+    threading.Thread(target=_telegram_polling_loop, daemon=True).start()
 
 
 if __name__ == '__main__':

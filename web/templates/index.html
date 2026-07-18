@@ -9,7 +9,8 @@
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif; 
             padding: 20px; 
-            background: #0f172a;
+            background: radial-gradient(circle at top right, #1e1b4b, #0f172a 60%);
+            color: #f8fafc;
             min-height: 100vh;
             overflow-x: hidden;
         }
@@ -36,17 +37,22 @@
         }
         h1 { 
             margin-bottom: 20px; 
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
             font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: none;
         }
-        .section { 
-            background: rgba(255, 255, 255, 0.95); 
-            padding: 25px; 
-            margin: 0 auto 20px; 
-            border-radius: 25px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-            backdrop-filter: blur(10px);
+        .section {
+            background: rgba(22, 30, 49, 0.65);
+            padding: 24px;
+            margin: 0 auto 24px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
             animation: slideIn 0.5s ease;
             max-width: 1400px;
         }
@@ -385,65 +391,74 @@
             }
         }
         
-        .section h2 { 
-            margin-bottom: 20px; 
-            font-size: 20px; 
-            color: #667eea;
+        .section h2 {
+            font-size: 18px;
+            color: #38bdf8;
+            margin-bottom: 20px;
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 10px;
+            justify-content: flex-start;
         }
         .section h2::before {
-            content: '✨';
-            margin-right: 10px;
-            font-size: 24px;
+            content: '◈';
+            margin-right: 0;
+            font-size: 14px;
+            color: #818cf8;
         }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; table-layout: fixed; }
         #rulesTable { table-layout: auto; min-width: 1320px; display: table; }
         #rulesList { display: none; }
         #rulesTable td:nth-child(8), #rulesTable th.col-traffic { white-space: nowrap; overflow: visible; }
         #rulesTable th:nth-child(8), #rulesTable td:nth-child(8) { width: 260px; min-width: 260px; }
-        th, td { padding: 15px; text-align: center; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+        th, td { padding: 14px 16px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06); white-space: nowrap; }
         td.cell { overflow: hidden; text-overflow: ellipsis; }
-        th { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        th {
+            background: rgba(255,255,255,0.03);
+            color: #94a3b8;
             font-weight: 600;
             border: none;
         }
-        th:first-child { border-radius: 15px 0 0 0; }
-        th:last-child { border-radius: 0 15px 0 0; }
-        tr:hover { background: #f8f9ff; transition: all 0.3s; }
-        button { 
-            padding: 6px 12px; 
-            border: none; 
-            border-radius: 18px; 
+        th:first-child { border-radius: 12px 0 0 0; }
+        th:last-child { border-radius: 0 12px 0 0; }
+        tr:hover { background: rgba(255,255,255,0.02); transition: all 0.2s; }
+        button {
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.3s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            font-size: 12px;
+            transition: all 0.2s ease;
+            box-shadow: none;
+            font-size: 13px;
             margin: 0 3px;
+            color: #fff;
+            background: rgba(255,255,255,0.05);
         }
-        button:hover { 
-            transform: translateY(-2px);
-            box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.16);
+            background: rgba(255,255,255,0.12);
         }
-        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-        .btn-danger { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
-        .btn-success { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; }
-        input, select, textarea { 
-            padding: 12px; 
-            border: 2px solid #e0e0e0; 
-            border-radius: 20px; 
+        .btn-primary { background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; border: none; }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #f43f5e); color: white; border: none; }
+        .btn-success { background: linear-gradient(135deg, #06b6d4, #10b981); color: white; border: none; }
+        input, select, textarea {
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
             width: 100%;
-            transition: all 0.3s;
+            transition: all 0.2s ease;
             font-family: inherit;
+            background: rgba(0,0,0,0.2);
+            color: #f8fafc;
         }
-        input:focus, select:focus, textarea:focus { 
-            outline: none; 
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
         }
         .form-group { margin-bottom: 20px; }
         .form-group label { 
@@ -504,9 +519,21 @@
             color: #f5576c;
             transform: rotate(90deg);
         }
-        .status-online { color: #00f2fe; font-weight: 600; }
-        .status-offline { color: #f5576c; font-weight: 600; }
-        .status-token_invalid { color: #f59e0b; font-weight: 600; }
+        .status-online { color: #10b981; font-weight: 700; }
+        .status-offline { color: #ef4444; font-weight: 700; }
+        .status-token_invalid { color: #f59e0b; font-weight: 700; }
+        .status-online::before, .status-offline::before, .status-token_invalid::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin-right: 6px;
+            border-radius: 50%;
+            vertical-align: middle;
+        }
+        .status-online::before { background: #10b981; box-shadow: 0 0 8px #10b981; animation: pulse 2s infinite; }
+        .status-offline::before { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .status-token_invalid::before { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
         .page-header-row {
             display: flex;
             justify-content: space-between;
@@ -883,37 +910,38 @@
         .close:hover { color: var(--text); }
 
         /* 树形服务器/规则列表 */
-        .tree-server { border: 1px solid var(--border); box-shadow: var(--shadow-sm); border-radius: 12px; }
+        .tree-server { border: 1px solid rgba(255,255,255,.06); box-shadow: 0 10px 24px rgba(0,0,0,.22); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.02); }
         .tree-server-header {
-            background: linear-gradient(135deg, rgba(255,255,255,.72) 0%, rgba(255,245,248,.92) 100%);
-            color: var(--text);
-            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(59,130,246,.24) 0%, rgba(99,102,241,.16) 100%);
+            color: #e2e8f0;
+            border-bottom: 1px solid rgba(255,255,255,.06);
             font-weight: 700;
         }
-        .tree-server-icon { color: var(--primary); text-shadow: none; }
+        .tree-server-icon { color: #38bdf8; text-shadow: none; }
         .tree-server-count {
-            background: var(--primary-soft);
-            color: var(--primary);
+            background: rgba(56,189,248,.12);
+            color: #7dd3fc;
             font-weight: 700;
         }
-        .tree-server-rules { background: var(--surface-2); }
+        .tree-server-rules { background: rgba(255,255,255,.02); }
         .tree-rule {
-            border-left: 3px solid var(--primary);
-            box-shadow: var(--shadow-sm);
-            border-radius: var(--radius-sm);
+            border-left: 3px solid #38bdf8;
+            box-shadow: 0 8px 18px rgba(0,0,0,.18);
+            border-radius: 12px;
+            background: rgba(255,255,255,.03);
         }
-        .tree-rule:hover { box-shadow: var(--shadow); }
-        .tree-rule-port { color: var(--primary); }
+        .tree-rule:hover { box-shadow: 0 12px 26px rgba(0,0,0,.22); }
+        .tree-rule-port { color: #38bdf8; }
 
         /* 规则卡片（移动端） */
         .rule-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            box-shadow: var(--shadow-sm);
+            background: rgba(255,255,255,.03);
+            border: 1px solid rgba(255,255,255,.06);
+            border-radius: 12px;
+            box-shadow: 0 8px 18px rgba(0,0,0,.18);
         }
-        .rule-card-label { color: var(--muted); }
-        .rule-card-value { color: var(--text); }
+        .rule-card-label { color: #94a3b8; }
+        .rule-card-value { color: #e2e8f0; }
 
         /* 流量条 */
         .traffic-bar, .tree-rule-traffic-bar {
@@ -927,17 +955,32 @@
 
         /* 移动端底部栏 */
         .mobile-bottom-bar {
-            background: rgba(255,255,255,.92);
-            border-top: 1px solid var(--border);
-            box-shadow: 0 -8px 26px rgba(255, 179, 198, .18);
+            background: rgba(15,23,42,.92);
+            border-top: 1px solid rgba(255,255,255,.08);
+            box-shadow: 0 -8px 26px rgba(0,0,0,.28);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
+            overscroll-behavior: contain;
         }
-        .mobile-bottom-bar button { color: var(--text-2); background: transparent; box-shadow: none; }
+        .mobile-bottom-bar button { color: #e2e8f0; background: transparent; box-shadow: none; }
+        .modal { background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); }
+        .modal-content {
+            background: #1e293b;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+        }
+        .modal-header { border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .modal-header h2 { color: #38bdf8; }
+        .form-group label { color: #cbd5e1; }
+        small { color: #94a3b8; }
+        #bulkBar { border: 1px solid rgba(255,255,255,.08) !important; background: rgba(255,255,255,.03) !important; color: #e2e8f0; }
 
         /* 顶部强制 HTTPS 开关与日志框收口 */
-        #logsContent { background: var(--surface-2) !important; border-color: var(--border) !important; color: var(--text-2); }
-        a { color: var(--primary); }
+        #logsContent { background: rgba(0,0,0,.18) !important; border-color: rgba(255,255,255,.06) !important; color: #cbd5e1; }
+        html, body { overscroll-behavior-y: auto; }
+        .container, .section, .modal-content { touch-action: pan-y; }
+        .table-wrap, #rulesTree, #rulesList, #auditContent, #logsContent, #diagResults { -webkit-overflow-scrolling: touch; }
+        a { color: #38bdf8; }
     </style>
 </head>
 <body>
@@ -945,7 +988,7 @@
     <div class="container">
         {% if must_change_password %}<div id="mustChangePasswordBanner" class="section" style="border:1px solid #f59e0b;border-left:3px solid #d97706;color:#92400e;font-weight:700;background:#fffbeb;">当前账号必须先修改密码后才能继续进行大部分管理操作。</div>{% endif %}
         <div class="page-header-row">
-            <h1 class="header-title">🌸 SNAT 转发管理看板</h1>
+            <h1 class="header-title">SNAT 转发管理</h1>
             <div class="header-actions">
                 <label style="display:flex;align-items:center;gap:6px;font-weight:700;color:#1f2937;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;">
                     <input type="checkbox" id="forceHttpsTop" data-change="saveForceHttpsTop" style="width:16px;height:16px;">
@@ -984,6 +1027,19 @@
                 <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button>
                 <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button>
             </div>
+            <div style="display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                <input id="ruleSearch" type="search" data-input="setRuleFilter" placeholder="🔍 搜索规则（端口 / 目标 / 备注 / 服务器）" style="max-width:320px;display:inline-block;width:50%;">
+                <select id="ruleSortSelect" data-change="setRuleSortSelect" style="max-width:200px;display:inline-block;width:35%;">
+                    <option value="created_at:desc" selected>按创建时间（新→旧）</option>
+                    <option value="created_at:asc">按创建时间（旧→新）</option>
+                    <option value="local_port:asc">按本地端口（小→大）</option>
+                    <option value="local_port:desc">按本地端口（大→小）</option>
+                    <option value="traffic_used_bytes:desc">按已用流量（多→少）</option>
+                    <option value="active_connections:desc">按活跃连接（多→少）</option>
+                    <option value="server_name:asc">按服务器名称（A→Z）</option>
+                </select>
+                <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><input type="checkbox" data-change="toggleAllRules" style="width:16px;height:16px;"> 全选</label>
+            </div>
             <div id="bulkBar" style="display:none;margin:10px 0;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">已选择 <strong id="selectedCount">0</strong> 条规则 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button> <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button> <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button></div>
             <!-- 树形规则列表 -->
             <div id="rulesTree"></div>
@@ -1008,6 +1064,13 @@
             <div id="alertResult" style="margin:10px 0;color:#555"></div>
             <div id="snapshotList" style="margin:10px 0;color:#555"></div>
             <div style="font-size:12px;color:#666;margin:6px 0">测试告警=用 TG Bot 发一条测试消息；检查告警=立即检查离线/异常服务器并尝试通过 TG 发送；查看备份=查看当前备份列表并可恢复。</div><div id="backupList" style="margin:10px 0;color:#555"></div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;align-items:center;justify-content:center;">
+                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgCommandEnabled" style="width:auto;"> 启用 Telegram 命令</label>
+                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgDailySummaryEnabled" style="width:auto;"> 启用每日汇总</label>
+                <label style="display:flex;align-items:center;gap:6px;">汇总时间 <input type="time" id="tgDailySummaryTime" value="09:00" style="width:auto;min-width:110px;"></label>
+                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgAuditEnabled" style="width:auto;"> 推送审计消息</label>
+                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgLimitAlertsEnabled" style="width:auto;"> 推送超限告警</label>
+            </div>
         </div>
 
         <div class="section">
@@ -1209,7 +1272,7 @@
     </div>
 
     <!-- 主逻辑：此前模板从未引入 app.js，导致仪表盘所有按钮的函数未定义（功能性缺陷），此处补回。 -->
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=3"></script>
 
     <!-- 移动端键盘检测 & PWA meta -->
     <script nonce="{{ csp_nonce }}">

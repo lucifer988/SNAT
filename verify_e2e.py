@@ -50,10 +50,14 @@ def free_port():
 
 
 def sign_headers(method, path, body=''):
+    # 与面板 build_agent_headers() 保持一致的第五轮签名格式：
+    # message = "{method}\n{path}\n{ts}\n{nonce}\n{body}"，并携带一次性 X-Nonce。
+    # （旧版脚本缺 nonce，Agent 默认 AGENT_REQUIRE_NONCE=1 会拒绝，导致正常路径全部误报 FAIL。）
     ts = str(int(time.time()))
-    msg = f"{method}\n{path}\n{ts}\n{body}".encode()
+    nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:22]
+    msg = f"{method}\n{path}\n{ts}\n{nonce}\n{body}".encode()
     sig = hmac.new(TOKEN.encode(), msg, hashlib.sha256).hexdigest()
-    return {'X-Timestamp': ts, 'X-Signature': sig}
+    return {'X-Timestamp': ts, 'X-Nonce': nonce, 'X-Signature': sig}
 
 
 def start_agent(port, allow_bearer):
@@ -115,10 +119,25 @@ def run_phase(label, allow_bearer):
         check('坏签名被拒(401)', requests.get(f'{base}/list_rules', headers=h, timeout=3).status_code == 401)
 
         stale = str(int(time.time()) - 99999)
-        msg = f"GET\n/list_rules\n{stale}\n".encode()
+        stale_nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:22]
+        msg = f"GET\n/list_rules\n{stale}\n{stale_nonce}\n".encode()
         sig = hmac.new(TOKEN.encode(), msg, hashlib.sha256).hexdigest()
-        r = requests.get(f'{base}/list_rules', headers={'X-Timestamp': stale, 'X-Signature': sig}, timeout=3)
+        r = requests.get(f'{base}/list_rules',
+                         headers={'X-Timestamp': stale, 'X-Nonce': stale_nonce, 'X-Signature': sig}, timeout=3)
         check('过期签名被拒(401, 防重放)', r.status_code == 401)
+
+        # --- nonce 重放：同一组签名头原样重发，第二次必须被 TTL 去重缓存拒绝 ---
+        replay_headers = sign_headers('GET', '/list_rules')
+        first = requests.get(f'{base}/list_rules', headers=replay_headers, timeout=3)
+        second = requests.get(f'{base}/list_rules', headers=replay_headers, timeout=3)
+        check('nonce 原样重放被拒(第一次200/第二次401)', first.status_code == 200 and second.status_code == 401)
+
+        # --- 缺 nonce：默认 AGENT_REQUIRE_NONCE=1 时必须拒绝 ---
+        no_nonce_ts = str(int(time.time()))
+        msg = f"GET\n/list_rules\n{no_nonce_ts}\n\n".encode()
+        sig = hmac.new(TOKEN.encode(), msg, hashlib.sha256).hexdigest()
+        r = requests.get(f'{base}/list_rules', headers={'X-Timestamp': no_nonce_ts, 'X-Signature': sig}, timeout=3)
+        check('缺 X-Nonce 被拒(401)', r.status_code == 401)
 
         signed = json.dumps({'local_port': 1, 'target_ip': '1.1.1.1', 'target_port': 80}, separators=(',', ':'))
         tampered = json.dumps({'local_port': 2, 'target_ip': '9.9.9.9', 'target_port': 80}, separators=(',', ':'))

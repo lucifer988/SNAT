@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local runtime state
+.env
+web/.secret_key
+web/snat_web.log
+web/snat_manager.db
+web/*.db
+agent/*.log
+logs/
+data/backups/
+data/agent/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temp
+*.tmp
+*.bak
+
+# Local review notes / throwaway UI previews
+修改意见.txt
+ui-*.html

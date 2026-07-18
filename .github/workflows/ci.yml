@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Byte-compile
+        run: |
+          python -m py_compile web/app.py agent/agent.py web/blueprints/*.py tests_smoke.py verify_e2e.py
+
+      - name: Smoke tests
+        env:
+          SNAT_ALLOW_DEFAULT_TOKEN: '1'
+        run: |
+          python -m unittest tests_smoke.py
+
+      - name: Agent HTTP end-to-end verification
+        run: |
+          python verify_e2e.py
+
+      - name: Shell and frontend syntax
+        run: |
+          bash -n install.sh update.sh uninstall_web.sh uninstall_agent.sh migrate_db.sh wireguard_setup.sh show_token.sh
+          node --check web/static/app.js

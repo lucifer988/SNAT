@@ -9,6 +9,45 @@ function escapeHtml(v) {
 }
 const esc = escapeHtml;
 
+function formatBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (!n) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(Math.floor(Math.log(n) / Math.log(k)), sizes.length - 1);
+    return `${parseFloat((n / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
+
+function formatUsedGB(bytes) {
+    return (Number(bytes || 0) / (1024 ** 3)).toFixed(2);
+}
+
+function getTrafficDisplay(usedBytes, limitGb) {
+    const usedGB = formatUsedGB(usedBytes);
+    const limit = Number(limitGb || 0);
+    if (limit <= 0) {
+        return {
+            usedGB,
+            unlimited: true,
+            percent: 100,
+            limitText: '∞',
+            inlineText: `${usedGB} / ∞`,
+            summaryText: `${usedGB}/∞`,
+            barClass: 'unlimited'
+        };
+    }
+    const percent = Math.min((Number(usedGB) / limit) * 100, 100);
+    return {
+        usedGB,
+        unlimited: false,
+        percent,
+        limitText: `${limit} GB`,
+        inlineText: `${usedGB} / ${limit} GB`,
+        summaryText: `${usedGB}/${limit}GB`,
+        barClass: percent >= 80 ? 'warning' : 'normal'
+    };
+}
+
 let servers = [];
 let rules = [];
 let csrfToken = '';
@@ -44,12 +83,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 // 移动端视图切换
 function checkMobileView() {
     const isMobile = window.innerWidth <= 768;
-    const table = document.getElementById('rulesTable');
-    const list = document.getElementById('rulesList');
-    if (table && list) {
-        table.style.display = isMobile ? 'none' : '';
-        list.style.display = isMobile ? 'block' : 'none';
-    }
     // 服务器表格移动端处理
     const serversTable = document.getElementById('serversTable');
     if (serversTable) {
@@ -184,8 +217,21 @@ async function loadRules() {
 
 function renderRulesTree() {
     const container = document.getElementById('rulesTree');
-    const list = [...rules];
-    
+    if (!container) return;
+    const list = getFilteredSortedRules();
+
+    // 更新“总活跃连接”汇总（此前该文案是写死的摆设，这里改为真实数据）
+    const connEl = document.getElementById('connectionsSummaryText');
+    if (connEl) {
+        const total = rules.reduce((s, r) => s + (r.enabled ? (r.active_connections ?? 0) : 0), 0);
+        connEl.textContent = `总活跃连接：${total}`;
+    }
+
+    if (!list.length) {
+        container.innerHTML = `<div style="text-align:center;color:#6b7280;padding:24px 0;">${rules.length ? '没有匹配当前搜索条件的规则' : '暂无转发规则，点击上方“+ 添加规则”创建'}</div>`;
+        return;
+    }
+
     // 按服务器分组
     const groups = {};
     list.forEach(r => {
@@ -194,18 +240,22 @@ function renderRulesTree() {
         groups[sn].push(r);
     });
     const serverNames = Object.keys(groups).sort();
-    
+    const filtering = !!ruleFilterText; // 搜索时强制展开所有分组，避免结果被折叠遮住
+
     container.innerHTML = serverNames.map(sn => {
         const serverRules = groups[sn];
+        const collapsed = !filtering && collapsedTreeGroups.has(sn);
+        const groupAllSelected = serverRules.every(r => selectedRuleIds.has(r.id));
         return `
             <div class="tree-server">
-                <div class="tree-server-header" data-act="toggleTreeGroup" data-arg="${esc(sn)}">
+                <div class="tree-server-header ${collapsed ? '' : 'expanded'}" data-act="toggleTreeGroup" data-arg="${esc(sn)}">
+                    <input type="checkbox" data-change="toggleTreeGroupSelection" data-arg="${esc(sn)}" ${groupAllSelected ? 'checked' : ''} title="全选该服务器下的规则" style="width:16px;height:16px;margin-right:6px;">
                     <span class="tree-server-icon">✿</span>
                     <span class="tree-server-name">${esc(sn)}</span>
                     <span class="tree-server-count">${serverRules.length} 条规则</span>
-                    <span class="tree-arrow">▼</span>
+                    <span class="tree-arrow">${collapsed ? '▶' : '▼'}</span>
                 </div>
-                <div class="tree-server-rules" id="tree-${esc(sn.replace(/'/g, "_"))}">
+                <div class="tree-server-rules" id="tree-${esc(sn.replace(/'/g, "_"))}" style="${collapsed ? 'display:none' : ''}">
                     ${serverRules.map((r, idx) => renderTreeRule(r, idx)).join('')}
                 </div>
             </div>
@@ -214,13 +264,11 @@ function renderRulesTree() {
 }
 
 function renderTreeRule(r, idx) {
-    const usedGB = (r.traffic_used_bytes / (1024**3)).toFixed(2);
     const limitGB = r.traffic_limit_gb || 0;
-    const percentage = limitGB > 0 ? Math.min((usedGB / limitGB) * 100, 100) : 0;
+    const traffic = getTrafficDisplay(r.traffic_used_bytes, limitGB);
     const targetDisplay = (r.target_host && r.target_host !== r.target_ip) ? `${r.target_host} (${r.target_ip})` : r.target_ip;
-    const trafficPercent = limitGB > 0 ? Math.min((usedGB / limitGB) * 100, 100) : 0;
-    const connClass = (r.active_connections ?? 0) >= 50 ? 'conn-full' : (r.active_connections ?? 0) >= 20 ? 'conn-high' : '';
-    const connConn = r.active_connections ?? 0;
+    const connCount = r.active_connections ?? 0;
+    const connClass = connCount >= 50 ? 'conn-full' : connCount >= 20 ? 'conn-high' : '';
 
     const BORDER_COLORS = ['#667eea','#f59e0b','#10b981','#ec4899','#3b82f6','#8b5cf6','#ef4444','#06b6d4'];
     const borderColor = BORDER_COLORS[idx % BORDER_COLORS.length];
@@ -228,17 +276,19 @@ function renderTreeRule(r, idx) {
     return `
         <div class="tree-rule" style="border-left-color:${borderColor}">
             <div class="tree-rule-main">
+                <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" style="width:16px;height:16px;">
                 <span class="tree-rule-port">${r.local_port}</span>
                 <span class="tree-rule-arrow">→</span>
                 <span class="tree-rule-target">${esc(targetDisplay)}:${r.target_port}</span>
                 <span class="tree-rule-status ${r.enabled ? 'enabled' : 'disabled'}">${r.enabled ? '启用' : '禁用'}</span>
             </div>
             <div class="tree-rule-info">
-                <span>流量: ${usedGB}/${limitGB > 0 ? limitGB + 'GB' : '不限'}</span>
-                <span>连接: <span class="${connClass}">${connConn}</span></span>
+                <span>流量: ${traffic.summaryText}</span>
+                <span>连接: <span class="${connClass}">${connCount}</span></span>
+                ${r.created_at ? `<span>创建: ${esc(formatCreatedAt(r.created_at))}</span>` : ''}
                 ${r.remark ? `<span>备注: ${esc(r.remark)}</span>` : ''}
             </div>
-            ${limitGB > 0 ? `<div class="tree-rule-traffic-bar"><div class="tree-rule-traffic-fill" style="width:${trafficPercent}%;background:linear-gradient(90deg,${borderColor}cc,${borderColor})"></div></div>` : ''}
+            <div class="tree-rule-traffic-bar"><div class="tree-rule-traffic-fill ${traffic.barClass}" style="width:${traffic.percent}%;${traffic.unlimited ? '' : `background:linear-gradient(90deg,${borderColor}cc,${borderColor})`} "></div></div>
             <div class="tree-rule-actions">
                 <button data-act="toggleRule" data-arg="${r.id}">${r.enabled ? '禁用' : '启用'}</button>
                 <button data-act="editRule" data-arg="${r.id}">编辑</button>
@@ -248,14 +298,21 @@ function renderTreeRule(r, idx) {
     `;
 }
 
+// 分组折叠状态：跨重渲染保留（连接数每 30s 刷新一次会整体重绘）
+const collapsedTreeGroups = new Set();
+
 function toggleTreeGroup(serverName) {
-    const el = document.getElementById('tree-' + serverName.replace(/'/g, "_"));
-    const header = el.previousElementSibling;
-    if (el && header) {
-        const isHidden = el.style.display === 'none';
-        el.style.display = isHidden ? 'block' : 'none';
-        header.classList.toggle('expanded', isHidden);
-    }
+    if (collapsedTreeGroups.has(serverName)) collapsedTreeGroups.delete(serverName);
+    else collapsedTreeGroups.add(serverName);
+    renderRulesTree();
+}
+
+// 勾选/取消整个服务器分组下的所有规则
+function toggleTreeGroupSelection(serverName, checked) {
+    rules.filter(r => (r.server_name || '未知服务器') === serverName)
+         .forEach(r => { if (checked) selectedRuleIds.add(r.id); else selectedRuleIds.delete(r.id); });
+    updateBulkBar();
+    renderRulesTree();
 }
 
 function getFilteredSortedRules() {
@@ -264,7 +321,7 @@ function getFilteredSortedRules() {
         const q = ruleFilterText.toLowerCase();
         items = items.filter(r => [r.server_name, r.local_port, r.target_host, r.target_ip, r.target_port, r.remark].join(' ').toLowerCase().includes(q));
     }
-    items.sort((a,b) => {
+    items.sort((a, b) => {
         const av = a[ruleSortKey] ?? '';
         const bv = b[ruleSortKey] ?? '';
         if (av == bv) return 0;
@@ -273,260 +330,18 @@ function getFilteredSortedRules() {
     return items;
 }
 
-function setRuleSort(key) {
-    if (ruleSortKey === key) ruleSortDir = ruleSortDir === 'asc' ? 'desc' : 'asc';
+// 排序：由规则区的下拉框驱动，值形如 "created_at:desc"
+function setRuleSort(key, dir) {
+    if (dir) { ruleSortKey = key; ruleSortDir = dir; }
+    else if (ruleSortKey === key) ruleSortDir = ruleSortDir === 'asc' ? 'desc' : 'asc';
     else { ruleSortKey = key; ruleSortDir = 'asc'; }
-    renderRules();
+    renderRulesTree();
 }
 
+// 搜索：由规则区的搜索框驱动（此前函数存在但页面上没有任何入口，属于摆设，现已接通）
 function setRuleFilter(value) {
-    ruleFilterText = value.trim();
-    renderRules();
-    renderServerGroups();
-}
-
-// 视图切换
-let rulesViewMode = 'table';
-function toggleRulesView(mode) {
-    rulesViewMode = mode;
-    document.getElementById('rulesTableView').style.display = mode === 'table' ? 'block' : 'none';
-    document.getElementById('rulesGroupView').style.display = mode === 'group' ? 'block' : 'none';
-    if (mode === 'group') renderServerGroups();
-}
-
-// 渲染分组视图
-function renderServerGroups() {
-    const container = document.getElementById('serverGroups');
-    const list = getFilteredSortedRules();
-    
-    // 按服务器分组
-    const groups = {};
-    list.forEach(r => {
-        const sn = r.server_name || '未知服务器';
-        if (!groups[sn]) groups[sn] = [];
-        groups[sn].push(r);
-    });
-    
-    container.innerHTML = Object.entries(groups).map(([serverName, serverRules]) => `
-        <div class="server-group">
-            <div class="server-group-header" data-act="toggleGroupStr" data-arg="${esc(serverName)}">
-                <span class="server-group-title">🖥️ ${esc(serverName)}</span>
-                <span class="server-group-count">${serverRules.length} 条规则</span>
-                <span class="server-group-arrow">▼</span>
-            </div>
-            <div class="server-group-content" id="group-${esc(serverName.replace(/'/g, "_"))}">
-                ${serverRules.map(r => renderRuleCard(r)).join('')}
-            </div>
-        </div>
-    `).join('');
-}
-
-function renderRuleCard(r) {
-    const usedGB = (r.traffic_used_bytes / (1024**3)).toFixed(2);
-    const limitGB = r.traffic_limit_gb || 0;
-    const percentage = limitGB > 0 ? Math.min((usedGB / limitGB) * 100, 100) : 0;
-    const targetDisplay = (r.target_host && r.target_host !== r.target_ip) ? `${r.target_host} (${r.target_ip})` : r.target_ip;
-    
-    return `
-        <div class="rule-card">
-            <div class="rule-card-header">
-                <span class="rule-card-title">端口 ${r.local_port} → ${r.target_port}</span>
-                <span class="status-${r.enabled ? 'online' : 'offline'}">${r.enabled ? '✓ 启用' : '✗ 禁用'}</span>
-            </div>
-            <div class="rule-card-row">
-                <span class="rule-card-label">目标</span>
-                <span class="rule-card-value">${esc(targetDisplay)}:${r.target_port}</span>
-            </div>
-            <div class="rule-card-row">
-                <span class="rule-card-label">流量</span>
-                <span class="rule-card-value">${usedGB} / ${limitGB > 0 ? limitGB + ' GB' : '不限'}</span>
-            </div>
-            ${limitGB > 0 ? `<div class="traffic-bar"><div class="traffic-bar-fill" style="width:${percentage}%"></div></div>` : ''}
-            <div class="rule-card-row">
-                <span class="rule-card-label">连接数</span>
-                <span class="rule-card-value">${r.active_connections ?? 0}</span>
-            </div>
-            ${r.remark ? `<div class="rule-card-row"><span class="rule-card-label">备注</span><span class="rule-card-value">${esc(r.remark)}</span></div>` : ''}
-            <div class="rule-card-actions">
-                <button class="btn-primary" data-act="toggleRule" data-arg="${r.id}">${r.enabled ? '禁用' : '启用'}</button>
-                <button class="btn-success" data-act="editRule" data-arg="${r.id}">编辑</button>
-                <button class="btn-danger" data-act="deleteRule" data-arg="${r.id}">删除</button>
-            </div>
-        </div>
-    `;
-}
-
-function toggleGroup(serverName) {
-    const el = document.getElementById('group-' + serverName.replace(/'/g, "_"));
-    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-
-function toggleRulesView(mode) {
-    rulesViewMode = mode;
-    document.getElementById('rulesTableView').style.display = mode === 'table' ? 'block' : 'none';
-    document.getElementById('rulesGroupView').style.display = mode === 'group' ? 'block' : 'none';
-    document.getElementById('rulesList').style.display = 'none';
-    renderRules();
-}
-
-// 渲染分组视图
-function renderRulesGroup() {
-    const container = document.getElementById('serverGroups');
-    if (!container) return;
-    
-    const list = getFilteredSortedRules();
-    const filterQ = ruleFilterText.toLowerCase();
-    
-    // 按服务器分组
-    const groups = {};
-    list.forEach(r => {
-        if (!groups[r.server_id]) {
-            groups[r.server_id] = { name: r.server_name, host: r.server_host, rules: [] };
-        }
-        groups[r.server_id].rules.push(r);
-    });
-    
-    // 渲染每个服务器分组
-    container.innerHTML = Object.entries(groups).map(([serverId, g]) => {
-        const enabled = g.rules.filter(r => r.enabled).length;
-        const total = g.rules.length;
-        const conns = g.rules.reduce((sum, r) => sum + (r.active_connections || 0), 0);
-        
-        return `
-        <div class="server-group" style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-            <div class="server-group-header" data-act="toggleGroup" data-arg="${serverId}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;cursor:pointer;">
-                <div>
-                    <div style="font-weight:700;font-size:16px;">${esc(g.name)}</div>
-                    <div style="font-size:12px;opacity:0.9;">${esc(g.host)}</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:14px;">${enabled}/${total} 规则</div>
-                    <div style="font-size:12px;">${conns} 连接</div>
-                </div>
-            </div>
-            <div class="server-group-rules" id="group_${serverId}" style="display:none;padding:10px;background:#f8fafc;">
-                <table style="width:100%;table-layout:auto;">
-                    <thead>
-                        <tr>
-                            <th style="padding:8px;text-align:left;font-size:12px;color:#667eea;">端口</th>
-                            <th style="padding:8px;text-align:left;font-size:12px;color:#667eea;">目标</th>
-                            <th style="padding:8px;text-align:center;font-size:12px;color:#667eea;">状态</th>
-                            <th style="padding:8px;text-align:center;font-size:12px;color:#667eea;">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${g.rules.map(r => {
-                            const targetDisplay = (r.target_host && r.target_host !== r.target_ip) ? `${esc(r.target_host)}<br><small style="color:#666">${esc(r.target_ip)}</small>` : esc(r.target_ip);
-                            return `
-                            <tr style="border-bottom:1px solid #eee;">
-                                <td style="padding:8px;"><strong>${r.local_port}</strong> → ${r.target_port}</td>
-                                <td style="padding:8px;font-size:13px;">${targetDisplay}</td>
-                                <td style="padding:8px;text-align:center;"><span class="status-${r.enabled ? 'online' : 'offline'}">${r.enabled ? '启用' : '禁用'}</span></td>
-                                <td style="padding:8px;text-align:center;">
-                                    <button class="btn-primary" data-act="toggleRule" data-arg="${r.id}" style="padding:4px 8px;font-size:11px;">${r.enabled ? '禁用' : '启用'}</button>
-                                    <button class="btn-success" data-act="editRule" data-arg="${r.id}" style="padding:4px 8px;font-size:11px;">编辑</button>
-                                </td>
-                            </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        `;
-    }).join('') || '<div style="padding:20px;text-align:center;color:#999;">暂无规则</div>';
-}
-
-// 展开/收起服务器分组
-function toggleGroup(serverId) {
-    const el = document.getElementById('group_' + serverId);
-    if (el) {
-        el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    }
-}
-
-// 渲染规则表格
-function renderRules() {
-    const tbody = document.querySelector('#rulesTable tbody');
-    const list = getFilteredSortedRules();
-    
-    // 桌面端表格
-    tbody.innerHTML = list.map(r => {
-        const usedGB = (r.traffic_used_bytes / (1024**3)).toFixed(2);
-        const limitGB = r.traffic_limit_gb || 0;
-        const percentage = limitGB > 0 ? Math.min((usedGB / limitGB) * 100, 100) : 0;
-        
-        return `
-        <tr>
-            <td><input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''}></td>
-            <td class="col-server cell">${esc(r.server_name)}</td>
-            <td class="col-port cell">${r.local_port}</td>
-            <td class="col-ip cell">${esc((r.target_host && r.target_host !== r.target_ip) ? `${r.target_host} (${r.target_ip})` : r.target_ip)}</td>
-            <td class="col-port cell">${r.target_port}</td>
-            <td class="col-remark cell" title="${esc(r.remark || '')}">${esc((r.remark || '').slice(0, 12))}</td>
-            <td class="col-port cell">${limitGB > 0 ? limitGB + ' GB' : '不限制'}</td>
-            <td class="col-traffic">
-                ${usedGB} GB
-                ${limitGB > 0 ? `<div class="traffic-bar"><div class="traffic-bar-fill" style="width:${percentage}%"></div></div>` : ''}
-            </td>
-            <td class="col-port cell">${r.active_connections ?? 0}</td>
-            <td class="col-port cell">${r.enabled ? '<span style="color:#00f2fe;font-weight:600">✓ 启用</span>' : '<span style="color:#f5576c;font-weight:600">✗ 禁用</span>'}</td>
-            <td class="col-created cell">${formatCreatedAt(r.created_at)}</td>
-            <td class="col-actions">
-                <div class="action-group" style="justify-content:center">
-                    <button class="btn-primary" data-act="toggleRule" data-arg="${r.id}">${r.enabled ? '禁用' : '启用'}</button>
-                    <button class="btn-success" data-act="editRule" data-arg="${r.id}">编辑</button>
-                    <button class="btn-danger" data-act="deleteRule" data-arg="${r.id}">删除</button>
-                </div>
-            </td>
-        </tr>
-    `}).join('');
-    
-    // 移动端卡片列表
-    const rulesList = document.getElementById('rulesList');
-    if (rulesList) {
-        rulesList.innerHTML = list.map(r => {
-            const usedGB = (r.traffic_used_bytes / (1024**3)).toFixed(2);
-            const limitGB = r.traffic_limit_gb || 0;
-            const percentage = limitGB > 0 ? Math.min((usedGB / limitGB) * 100, 100) : 0;
-            const targetDisplay = (r.target_host && r.target_host !== r.target_ip) ? `${r.target_host} (${r.target_ip})` : r.target_ip;
-            
-            return `
-            <div class="rule-card">
-                <div class="rule-card-header">
-                    <span class="rule-card-title">端口 ${r.local_port} → ${r.target_port}</span>
-                    <span class="status-${r.enabled ? 'online' : 'offline'}">${r.enabled ? '启用' : '禁用'}</span>
-                </div>
-                <div class="rule-card-row">
-                    <span class="rule-card-label">服务器</span>
-                    <span class="rule-card-value">${esc(r.server_name)}</span>
-                </div>
-                <div class="rule-card-row">
-                    <span class="rule-card-label">目标</span>
-                    <span class="rule-card-value">${esc(targetDisplay)}:${r.target_port}</span>
-                </div>
-                <div class="rule-card-row">
-                    <span class="rule-card-label">流量</span>
-                    <span class="rule-card-value">${usedGB} / ${limitGB > 0 ? limitGB + ' GB' : '不限'}</span>
-                </div>
-                ${limitGB > 0 ? `<div class="traffic-bar"><div class="traffic-bar-fill" style="width:${percentage}%"></div></div>` : ''}
-                <div class="rule-card-row">
-                    <span class="rule-card-label">连接数</span>
-                    <span class="rule-card-value">${r.active_connections ?? 0}</span>
-                </div>
-                ${r.remark ? `<div class="rule-card-row"><span class="rule-card-label">备注</span><span class="rule-card-value">${esc(r.remark)}</span></div>` : ''}
-                <div class="rule-card-actions">
-                    <button class="btn-primary" data-act="toggleRule" data-arg="${r.id}">${r.enabled ? '禁用' : '启用'}</button>
-                    <button class="btn-success" data-act="editRule" data-arg="${r.id}">编辑</button>
-                    <button class="btn-danger" data-act="deleteRule" data-arg="${r.id}">删除</button>
-                </div>
-            </div>
-            `;
-        }).join('');
-    }
-    
-    // 同时渲染分组视图
-    renderRulesGroup();
+    ruleFilterText = (value || '').trim();
+    renderRulesTree();
 }
 
 function formatCreatedAt(value) {
@@ -906,17 +721,19 @@ function checkTrafficAlerts() {
 }
 
 // 显示告警
+let alertBoxTimer = null;
 function showAlert(message) {
-    const alertDiv = document.getElementById('alertBox');
-    if (!alertDiv) {
-        const div = document.createElement('div');
+    let div = document.getElementById('alertBox');
+    if (!div) {
+        div = document.createElement('div');
         div.id = 'alertBox';
         div.style.cssText = 'position:fixed;top:20px;right:20px;background:#ffa500;color:#000;padding:15px 20px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:400px;z-index:10000';
-        div.innerHTML = `<strong>⚠ 告警</strong><br>${esc(message).replace(/\n/g, '<br>')}`;
         document.body.appendChild(div);
-        
-        setTimeout(() => div.remove(), 10000);
     }
+    // 复用同一个提示框并刷新内容/倒计时（此前若 10s 内已有提示框，新消息会被静默丢弃）
+    div.innerHTML = `<strong>⚠ 告警</strong><br>${esc(message).replace(/\n/g, '<br>')}`;
+    if (alertBoxTimer) clearTimeout(alertBoxTimer);
+    alertBoxTimer = setTimeout(() => { div.remove(); alertBoxTimer = null; }, 10000);
 }
 
 
@@ -937,7 +754,7 @@ function toggleRuleSelection(id, checked) {
 function toggleAllRules(checked) {
     selectedRuleIds = checked ? new Set(getFilteredSortedRules().map(r => r.id)) : new Set();
     updateBulkBar();
-    renderRules();
+    renderRulesTree();
 }
 
 async function bulkAction(action) {
@@ -1123,13 +940,37 @@ async function loadAlertSettings() {
     if (token) { token.value = ''; token.placeholder = data.tg_bot_token_set ? '已配置（留空＝不修改）' : '未配置'; }
     if (chat) chat.value = data.tg_chat_id || '';
     if (sec) sec.value = data.offline_seconds || 300;
+    const cmd = document.getElementById('tgCommandEnabled');
+    const daily = document.getElementById('tgDailySummaryEnabled');
+    const dailyTime = document.getElementById('tgDailySummaryTime');
+    const audit = document.getElementById('tgAuditEnabled');
+    const limit = document.getElementById('tgLimitAlertsEnabled');
+    if (cmd) cmd.checked = !!data.command_enabled;
+    if (daily) daily.checked = !!data.daily_summary_enabled;
+    if (dailyTime) dailyTime.value = data.daily_summary_time || '09:00';
+    if (audit) audit.checked = !!data.audit_enabled;
+    if (limit) limit.checked = !!data.limit_alerts_enabled;
 }
 
 async function saveAlertSettings() {
     const tg_bot_token = document.getElementById('tgBotToken').value;
     const tg_chat_id = document.getElementById('tgChatId').value;
     const offline_seconds = parseInt(document.getElementById('alertOfflineSeconds').value || '300');
-    const resp = await postWithCsrf('/api/settings/alerts', {tg_bot_token, tg_chat_id, offline_seconds});
+    const command_enabled = !!document.getElementById('tgCommandEnabled')?.checked;
+    const daily_summary_enabled = !!document.getElementById('tgDailySummaryEnabled')?.checked;
+    const daily_summary_time = document.getElementById('tgDailySummaryTime')?.value || '09:00';
+    const audit_enabled = !!document.getElementById('tgAuditEnabled')?.checked;
+    const limit_alerts_enabled = !!document.getElementById('tgLimitAlertsEnabled')?.checked;
+    const resp = await postWithCsrf('/api/settings/alerts', {
+        tg_bot_token,
+        tg_chat_id,
+        offline_seconds,
+        command_enabled,
+        daily_summary_enabled,
+        daily_summary_time,
+        audit_enabled,
+        limit_alerts_enabled,
+    });
     const data = await resp.json();
     if (data.success) showSuccess('告警设置已保存'); else showError(data.error || '保存失败');
 }
@@ -1225,8 +1066,10 @@ async function loadConnectionsSummary() {
         const data = await resp.json();
         const map = new Map((data.items || []).map(i => [i.rule_id ?? i.id, i.active_connections]));
         rules = rules.map(r => ({...r, active_connections: map.get(r.id) ?? 0}));
-        // 不再显示总连接数，让连接数显示在各规则卡片中
-        renderRules();
+        // 刷新树形视图：每条规则卡片上的“连接”与标题里的“总活跃连接”都会更新。
+        // （此前这里调用的 renderRules() 依赖不存在的 #rulesTable，抛错后被 catch 吞掉，
+        //   造成连接数在页面上永远显示 0 —— 属于典型“摆件”，现已修复。）
+        renderRulesTree();
     } catch (e) {
         console.error('连接数加载失败:', e);
     }
@@ -1271,7 +1114,6 @@ const ACTION_HANDLERS = {
     exportData: (el) => exportData(el.dataset.arg),
     closeModal: (el) => closeModal(el.dataset.arg),
     closeModalSelf: (el) => { const m = el.closest('.modal'); if (m) m.remove(); },
-    toggleGroupStr: (el) => toggleGroup(el.dataset.arg),
     toggleTreeGroup: (el) => toggleTreeGroup(el.dataset.arg),
     restoreBackup: (el) => restoreBackup(el.dataset.arg),
     // 带数字参数
@@ -1282,7 +1124,6 @@ const ACTION_HANDLERS = {
     editRule: (el) => editRule(Number(el.dataset.arg)),
     editServer: (el) => editServer(Number(el.dataset.arg)),
     restoreSnapshot: (el) => restoreSnapshot(Number(el.dataset.arg)),
-    toggleGroup: (el) => toggleGroup(Number(el.dataset.arg)),
     toggleRule: (el) => toggleRule(Number(el.dataset.arg)),
 };
 
@@ -1298,9 +1139,23 @@ document.addEventListener('change', (e) => {
     if (!el) return;
     if (el.dataset.change === 'toggleRuleSelection') {
         toggleRuleSelection(Number(el.dataset.arg), el.checked);
+    } else if (el.dataset.change === 'toggleTreeGroupSelection') {
+        toggleTreeGroupSelection(el.dataset.arg, el.checked);
+    } else if (el.dataset.change === 'toggleAllRules') {
+        toggleAllRules(el.checked);
+    } else if (el.dataset.change === 'setRuleSortSelect') {
+        const [key, dir] = (el.value || 'created_at:desc').split(':');
+        setRuleSort(key, dir === 'asc' ? 'asc' : 'desc');
     } else if (el.dataset.change === 'saveForceHttpsTop') {
         saveForceHttpsTop(el.checked);
     }
+});
+
+// 搜索框：input 事件实时过滤（同样走事件委托，兼容无 'unsafe-inline' 的 CSP）
+document.addEventListener('input', (e) => {
+    const el = e.target.closest('[data-input]');
+    if (!el) return;
+    if (el.dataset.input === 'setRuleFilter') setRuleFilter(el.value);
 });
 
 document.addEventListener('submit', (e) => {

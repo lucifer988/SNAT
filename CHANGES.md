@@ -1,6 +1,33 @@
 # 安全加固改动总览（CHANGES）
 
-本项目在原版基础上完成了五轮安全审计与修复，所有改动已合入代码。自动化测试全部通过。
+本项目在原版基础上完成了五轮安全审计与一轮功能修复，所有改动已合入代码。自动化测试全部通过。
+
+## 第六轮（本次：功能修复 —— 把“摆件”接成真功能）
+
+本轮聚焦功能完整性：此前若干界面元素/脚本只是摆设（有 UI 无逻辑、或有逻辑无入口、或调用早已不存在的 DOM 而静默失败）。逐一排查并修复：
+
+前端（web/static/app.js + index.html）：
+- **活跃连接数显示彻底失效（最严重的摆件）**：`loadConnectionsSummary()` 刷新连接数后调用的 `renderRules()` 依赖页面上根本不存在的 `#rulesTable`，抛错后被 `try/catch` 吞掉 —— 结果是每条规则的“连接”永远显示 0，标题里的“总活跃连接：0”是写死的静态文案。现改为刷新树形视图 `renderRulesTree()`，并把标题汇总改为真实合计（仅统计启用规则）。
+- **批量启用/禁用/删除按钮不可用**：勾选框只存在于早已废弃的表格视图渲染代码里，当前树形视图没有任何勾选入口，点批量按钮永远提示“请先选择规则”。现给每条规则卡片加勾选框、每个服务器分组头加“全组勾选”、规则区加“全选”，与既有 `selectedRuleIds` / `bulkAction` 逻辑打通。
+- **规则搜索/排序纯摆设**：样式表里写了 `#ruleSearch` 的样式但页面没有这个元素；`setRuleFilter` / `setRuleSort` / `getFilteredSortedRules` 定义了却无任何入口调用。现补上搜索框与排序下拉（创建时间/端口/流量/连接数/服务器名），树形渲染统一走过滤+排序管道；搜索时自动展开全部分组并提供空态提示。
+- **清理三代同堂的死渲染代码**：删除 `renderRules`（写入不存在的 `#rulesTable`）、`renderServerGroups` / `renderRulesGroup` / `renderRuleCard`（写入不存在的 `#serverGroups`）、重复定义两次且引用不存在容器的 `toggleRulesView`、以及 `checkMobileView` 中操作不存在元素的死分支。规则区从此只有树形视图一条真实渲染路径，避免再次出现“改了 A 视图、坏了 B 视图”的回归。
+- **分组折叠状态跨刷新保留**：连接数每 30 秒整体重绘一次会把用户手动折叠的分组重新展开；现用集合记录折叠状态，重绘后保持不变。
+- **告警提示框吞消息**：`showAlert` 在 10 秒内已有提示框时会静默丢弃新消息；现复用同一提示框刷新内容与倒计时。
+- 事件接线全部沿用 data-act / data-change / data-input 事件委托，兼容无 `'unsafe-inline'` 的 CSP，未新增任何内联脚本。
+- 静态资源版本号 `app.js?v=2` → `?v=3`，避免浏览器缓存旧脚本。
+
+后端（web/app.py）：
+- **修复 `python3 -m web.app` / `python3 web/app.py` 循环导入崩溃**：以 `__main__` 身份执行时，blueprints 的 `from web import app` 会把本文件再完整导入一遍，两个半初始化副本互相 import 直接 `AttributeError` 退出（此前只有 gunicorn 的 `web.wsgi` 入口能启动，开发/调试直跑必挂）。现直跑时把仓库根目录补进 `sys.path` 并把 `__main__` 登记为规范的 `web.app` 模块。
+
+测试工具（verify_e2e.py）：
+- **端到端脚本同步到第五轮签名格式**：旧脚本签名缺 `X-Nonce`，Agent 默认 `AGENT_REQUIRE_NONCE=1` 会全部拒绝，导致 6 个正常路径用例误报 FAIL。现与面板 `build_agent_headers()` 对齐（`method\n path\n ts\n nonce\n body`），并新增两条攻击路径用例：同一签名头原样重放第二次必须 401（nonce 去重）、缺 `X-Nonce` 必须 401。当前 22/22 全部通过。
+
+发布包卫生：
+- 发行归档不再携带 `web/.secret_key`、`web/snat_web.log`、数据库文件与 `__pycache__`。特别说明：旧压缩包里带出的 `.secret_key` 属于安全隐患 —— 所有按包部署且未删除该文件的实例会共用同一个会话签名密钥，任何拿到包的人都能伪造这些实例的登录会话。已部署过旧包的用户请删除 `web/.secret_key` 让其重新生成（或用 `SNAT_SECRET_KEY` 注入），重新登录即可。
+
+回归验证：`python -m unittest tests_smoke.py` 56/56 通过；`verify_e2e.py` 22/22 通过；另以假 iptables/conntrack 环境完整走通“建服务器 → 建规则 → 启停/编辑/批量 → 流量/连接/一致性/重下发 → 快照/备份/恢复 → 导入导出 → 告警设置/测试 → 诊断/日志/审计”的全链路。
+
+---
 
 ## 第五轮加固（本次：越权/重放/横向移动 收口 + 二次认证 + 系统级沙箱）
 
