@@ -15,7 +15,10 @@ bp = Blueprint('admin', __name__)
 
 @bp.route('/')
 def index():
-    if not session.get('logged_in'):
+    # 只信任 cookie 里的 logged_in 会让“被吊销/改密/过期”的会话仍能加载后台壳页；
+    # 与受保护数据端点保持同一判定：登录标志 + 服务端会话有效性。
+    if not session.get('logged_in') or not _app._session_is_valid():
+        session.clear()
         return redirect(url_for('auth.login'))
     return render_template(
         'index.html',

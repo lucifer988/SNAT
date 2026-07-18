@@ -797,12 +797,27 @@ def _inject_csp_nonce():
     return {'csp_nonce': getattr(g, 'csp_nonce', '')}
 
 
+# 客户端可控的 X-Request-ID 会被写入日志、回显到响应头、并转发到 Agent 请求头。
+# 若不加约束：内嵌换行会让 Werkzeug 在序列化响应头时抛错 → 任意端点（含 /healthz）被
+# 未认证请求打成 500；非换行垃圾字符（制表符/超长串）则原样进入日志与下游 Agent 头，
+# 形成日志注入 / 请求头污染面。这里只保留安全字符集并限长，非法则回退到自生成 ID。
+_REQUEST_ID_MAX_LEN = 64
+_REQUEST_ID_SAFE = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-')
+
+
+def _sanitize_request_id(raw):
+    candidate = (raw or '').strip()
+    if candidate and len(candidate) <= _REQUEST_ID_MAX_LEN and all(ch in _REQUEST_ID_SAFE for ch in candidate):
+        return candidate
+    return uuid4().hex[:12]
+
+
 @app.before_request
 def before_request():
     """全局请求前检查"""
     # 为本次请求生成 CSP nonce，供模板内联 <script> 与 after_request 的 CSP 头共用。
     g.csp_nonce = secrets.token_urlsafe(16)
-    g.request_id = request.headers.get('X-Request-ID', '').strip() or uuid4().hex[:12]
+    g.request_id = _sanitize_request_id(request.headers.get('X-Request-ID', ''))
     # SESSION_COOKIE_SECURE 启动时按 FORCE_HTTPS 环境变量固定，但 force_https 可在运行时切换。
     # 在此按运行时设置动态刷新该配置：Flask 在响应末尾 save_session 时会读取它决定是否打 Secure，
     # 从而消除"启动时 FORCE_HTTPS=0 → 运行时开启 HTTPS"期间 session cookie 仍走明文的窗口。

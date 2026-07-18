@@ -1024,6 +1024,12 @@ def restore_rules():
     logging.info(f"恢复 {len(rules)} 条规则")
     for local_port, rule in rules.items():
         if rule.get('suspended'): continue
+        # 与 /add_rule、DNS 刷新一致：恢复前重新校验目标地址。避免“规则保存后目标策略收紧
+        # （如新增了 AGENT_TARGET_DENY_CIDRS 或关闭了 ALLOW_PRIVATE）”时，历史规则在重启后
+        # 被静默重新下发，重新打开一条通往内网/回环/云元数据的转发路径。
+        if not is_target_ip_allowed(str(rule.get('target_ip', ''))):
+            logging.warning(f"恢复时拒绝规则(目标不符合当前策略): port {local_port} -> {rule.get('target_ip')}")
+            continue
         add_snat_rule(int(local_port), rule['target_ip'], rule['target_port'], target_host=rule.get('target_host'))
 
 _WEAK_TOKENS={DEFAULT_AGENT_TOKEN,'change-me','changeme','password','passw0rd','token','secret','admin','test','123456','12345678','default'}

@@ -2,6 +2,34 @@
 
 本项目在原版基础上完成了多轮安全审计与功能修复，所有改动已合入代码。自动化测试全部通过。
 
+## 第十轮（本次：会话吊销一致性 / 请求头净化 / Agent 恢复期目标策略）
+
+本轮以攻击者视角再做一轮深度审计，发现并修复三处问题（均附 PoC 验证 + 回归测试）：
+
+- **会话吊销一致性（高）**：`/`（后台首页）与 `/api/csrf_token` 过去只校验 cookie 里的
+  `logged_in`，不校验服务端会话状态。PoC 证实：服务端把会话置为 `revoked` 后，`GET /`
+  仍返回 200（可加载后台壳页）、`GET /api/csrf_token` 仍返回 200（吊销后仍能领取有效
+  CSRF token）。修复：两个入口改为 `logged_in and _session_is_valid()`，失败即 `session.clear()`
+  并跳登录/返回 401，与受保护数据端点判定完全一致——吊销/改密/过期即整体失效。
+  改动文件：`web/blueprints/admin.py`、`web/blueprints/auth.py`。
+
+- **X-Request-ID 未净化（中）**：客户端可控的 `X-Request-ID` 会被写入日志、回显到响应头、
+  并原样转发给下游 Agent 请求头。过去仅做首尾 `strip()`，含空格/制表符的超长串原样透传，
+  形成日志注入 / 请求头污染面。修复：新增 `_sanitize_request_id()`，只保留安全字符集
+  `[A-Za-z0-9._-]` 并限长 64，非法输入回退到自生成 ID。改动文件：`web/app.py`。
+
+- **Agent 恢复期目标策略校验（纵深防御）**：`/add_rule` 与 DNS 刷新都会校验
+  `is_target_ip_allowed`，唯独启动 `restore_rules()` 不校验。规则保存后若目标策略收紧
+  （新增 `AGENT_TARGET_DENY_CIDRS` 或关闭 `ALLOW_PRIVATE`），历史规则会在重启后被静默
+  重新下发，重新打开一条通往内网/回环/云元数据的转发路径。修复：恢复前重新校验目标地址，
+  命中拒绝网段则跳过并告警。改动文件：`agent/agent.py`。
+
+回归覆盖：新增 `tests_round10_hardening.py` 8 项（会话吊销一致性、request-id 净化、
+Agent 恢复策略）。全量：`tests_smoke` 56 + `tests_round7` 16 + `tests_security_round8` 8 +
+`tests_round10_hardening` 8 = 88 项 unittest，外加 `verify_e2e.py` 22 项，全部通过。
+
+---
+
 ## 第七轮（状态一致性 / 流量限额 / 部署收敛）
 
 - Agent 不再默认修改宿主机全局 `FORWARD` 策略；规则下发按阶段执行，失败自动回滚并校验 DNAT。

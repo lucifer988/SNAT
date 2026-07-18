@@ -130,7 +130,9 @@ def reauth():
 
 @bp.route('/api/csrf_token')
 def get_csrf_token():
-    if not session.get('logged_in'):
+    # 与受保护端点一致：吊销/过期/改密后的会话不得再领取有效 CSRF token。
+    if not session.get('logged_in') or not _app._session_is_valid():
+        session.clear()
         return jsonify({'error': '未登录'}), 401
     token = _app.generate_csrf_token()
     _app.log_event('INFO', "生成 CSRF Token")
