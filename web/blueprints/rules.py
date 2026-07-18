@@ -109,7 +109,7 @@ def rules():
             _app.log_event('ERROR', f"规则 {rule_id} 同步失败，已回滚数据库: {failed}")
             return jsonify({'success': False, 'error': 'Agent 全量同步失败', 'details': failed}), 502
 
-        _app.audit_log('add_rule', f"{server['name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
+        _app.audit_log('add_rule', f"{_app.circled_num(rule_id)}{server['name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
         return jsonify({'success': True, 'id': rule_id})
     except Exception as e:
         _rollback_rule(rule_id)
@@ -151,7 +151,7 @@ def update_or_delete_rule(rule_id):
         if not (1 <= data['local_port'] <= 65535) or not (1 <= data['target_port'] <= 65535):
             conn.close()
             return jsonify({'success': False, 'error': '端口范围必须在 1-65535'}), 400
-        c.execute('''SELECT r.*, s.host, s.port, s.token
+        c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name
                     FROM rules r JOIN servers s ON r.server_id = s.id
                     WHERE r.id = ?''', (rule_id,))
         row = c.fetchone()
@@ -206,12 +206,12 @@ def update_or_delete_rule(rule_id):
         conn.commit()
         conn.close()
         _app.log_event('INFO', f"更新规则 {rule_id}: {data['local_port']} -> {data['target_ip']}:{data['target_port']}")
-        _app.audit_log('update_rule', f"id={rule_id}", 'success', f"{data['local_port']} -> {data['target_ip']}:{data['target_port']}")
+        _app.audit_log('update_rule', f"{_app.circled_num(rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
         _app.sync_server_rules(rule['server_id'], log_prefix=f'[编辑] 服务器 {rule["server_id"]}')
         return jsonify({'success': True})
 
     # DELETE
-    c.execute('''SELECT r.*, s.host, s.port, s.token
+    c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name
                 FROM rules r JOIN servers s ON r.server_id = s.id
                 WHERE r.id = ?''', (rule_id,))
     row = c.fetchone()
@@ -247,7 +247,7 @@ def update_or_delete_rule(rule_id):
     failed = [item for item in sync_results if item.get('status') not in _app.SYNC_OK_STATUSES]
     if failed:
         return jsonify({'success': False, 'error': '删除后全量同步失败', 'details': failed}), 502
-    _app.audit_log('delete_rule', f"id={rule_id}:{rule['local_port']}", 'success', f"-> {rule['target_ip']}:{rule['target_port']}")
+    _app.audit_log('delete_rule', f"{_app.circled_num(rule_id)}{rule['server_name']}:{rule['local_port']}", 'success', f"-> {rule['target_ip']}:{rule['target_port']}")
     return jsonify({'success': True})
 
 
@@ -259,7 +259,7 @@ def toggle_rule(rule_id):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
-    c.execute('''SELECT r.*, s.host, s.port, s.token
+    c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name
                 FROM rules r JOIN servers s ON r.server_id = s.id
                 WHERE r.id = ?''', (rule_id,))
     row = c.fetchone()
@@ -306,7 +306,7 @@ def toggle_rule(rule_id):
     conn.close()
 
     _app.log_event('INFO', f"规则 {rule_id} 状态已更新为 {new_enabled}")
-    _app.audit_log('toggle_rule', f"id={rule_id}:{rule['local_port']}", 'success', '启用' if new_enabled else '停用')
+    _app.audit_log('toggle_rule', f"{_app.circled_num(rule_id)}{rule['server_name']}:{rule['local_port']}", 'success', '启用' if new_enabled else '停用')
     _app.sync_server_rules(rule['server_id'], log_prefix=f'[切换] 服务器 {rule["server_id"]}')
     return jsonify({'success': True, 'enabled': new_enabled})
 
@@ -326,7 +326,7 @@ def bulk_rules():
     c = conn.cursor()
     placeholders = ','.join('?' * len(rule_ids))
     c.execute(
-        f'SELECT r.*, s.host, s.port, s.token FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.id IN ({placeholders})',
+        f'SELECT r.*, s.host, s.port, s.token, s.name AS server_name FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.id IN ({placeholders})',
         rule_ids
     )
     rows = [dict(row) for row in c.fetchall()]
@@ -390,7 +390,7 @@ def restore_reapply():
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute('SELECT r.*, s.host, s.port, s.token FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.enabled = 1 ORDER BY r.id')
+    c.execute('SELECT r.*, s.host, s.port, s.token, s.name AS server_name FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.enabled = 1 ORDER BY r.id')
     rule_rows = [dict(r) for r in c.fetchall()]
     conn.close()
     results = []

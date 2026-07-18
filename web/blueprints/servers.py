@@ -52,7 +52,7 @@ def servers():
         server_id = c.lastrowid
         conn.close()
         _app.log_event('INFO', f"新增服务器 {server_id}: {data['name']} {data['host']}:{data.get('port', 8888)}")
-        _app.audit_log('add_server', data['name'].strip(), 'success', f'{host}:{port}')
+        _app.audit_log('add_server', f"{_app.circled_num(server_id)}{data['name'].strip()}", 'success', f'{host}:{port}')
         return jsonify({'success': True, 'id': server_id})
     except sqlite3.IntegrityError:
         conn.close()
@@ -92,7 +92,7 @@ def update_server(server_id):
         conn.close()
         return jsonify({'success': False, 'error': '服务器名称已存在'}), 400
     conn.close()
-    _app.audit_log('update_server', str(server_id))
+    _app.audit_log('update_server', f"{_app.circled_num(server_id)}{data['name'].strip()}")
     return jsonify({'success': True})
 
 
@@ -115,8 +115,8 @@ def delete_server(server_id):
     if failed and not force:
         conn.close(); return jsonify({'success':False,'error':'远端规则未确认清理','cleanup_failed':failed,'require_force':True}),409
     c.execute('DELETE FROM rules WHERE server_id=?',(server_id,)); c.execute('DELETE FROM servers WHERE id=?',(server_id,)); conn.commit(); conn.close()
-    _app.audit_log('delete_server', f"{server['name']}({server_id})")
-    if failed: _app.audit_log('delete_server_forced',str(server_id),'warning',_app.json.dumps({'orphaned':failed},ensure_ascii=False))
+    _app.audit_log('delete_server', f"{_app.circled_num(server_id)}{server['name']}")
+    if failed: _app.audit_log('delete_server_forced',f"{_app.circled_num(server_id)}{server['name']}",'warning',_app.json.dumps({'orphaned':failed},ensure_ascii=False))
     return jsonify({'success':True,'orphaned':failed})
 
 

@@ -1018,6 +1018,15 @@ def csv_safe_row(row):
     return safe
 
 
+def circled_num(n):
+    """1-20 用圈码 ①-⑳ 展示编号（TG 原生可显示），超出回退为 #n。"""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return '#?'
+    return chr(0x2460 + n - 1) if 1 <= n <= 20 else f'#{n}'
+
+
 def audit_log(action, target='', status='success', detail=''):
     try:
         conn = sqlite3.connect(DB_FILE, timeout=10)
