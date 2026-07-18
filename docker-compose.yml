@@ -9,9 +9,8 @@ services:
       # 避免 `docker compose up -d` 后面板直接明文裸露在公网 5000 端口。
       - "127.0.0.1:${SNAT_WEB_BIND:-5000}:5000"
     environment:
-      # 密钥一律从 .env 注入（见 .env.example）。未设置时 compose 直接报错退出，
-      # 杜绝带着已知弱口令/弱密钥上线。生成强值：openssl rand -hex 32
-      SNAT_ADMIN_PASSWORD: ${SNAT_ADMIN_PASSWORD:?请在 .env 设置 SNAT_ADMIN_PASSWORD (见 .env.example)}
+      # 首次启动可从 .env 注入管理员密码；初始化后应从 .env 删除，避免长期保留。
+      SNAT_ADMIN_PASSWORD: ${SNAT_ADMIN_PASSWORD:-}
       SNAT_TOKEN_SECRET: ${SNAT_TOKEN_SECRET:?请在 .env 设置 SNAT_TOKEN_SECRET (见 .env.example)}
       # 可选：集中托管 Flask session 密钥（不设则容器内自动生成并持久化到卷）
       SNAT_SECRET_KEY: ${SNAT_SECRET_KEY:-}
@@ -24,6 +23,8 @@ services:
       SNAT_SECRET_KEY_FILE: /data/secret_key
       SNAT_LOG_FILE: /data/logs/snat_web.log
       BACKUP_DIR: /data/backups
+      # 默认不暴露指标；设置强随机 Token 后以 Authorization: Bearer TOKEN 访问。
+      SNAT_METRICS_TOKEN: ${SNAT_METRICS_TOKEN:-}
     volumes:
       - ./data:/data
     read_only: true
@@ -59,7 +60,7 @@ services:
       AGENT_TOKEN: ${AGENT_TOKEN:?请在 .env 设置 AGENT_TOKEN (见 .env.example)}
       DNS_REFRESH_INTERVAL: "60"
       # 外网部署：把 AGENT_HOST 设成 WireGuard 内网 IP，让 Agent 只在隧道内监听。
-      AGENT_HOST: "${AGENT_HOST:-0.0.0.0}"
+      AGENT_HOST: "${AGENT_HOST:-127.0.0.1}"
       AGENT_PORT: "${AGENT_PORT:-8888}"
       # 默认仅签名严格模式；仅当对接无法签名的老面板时才临时改 1。
       AGENT_ALLOW_BEARER: "${AGENT_ALLOW_BEARER:-0}"

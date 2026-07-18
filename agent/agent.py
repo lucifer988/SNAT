@@ -33,7 +33,7 @@ DNS_REFRESH_INTERVAL = int(os.getenv('DNS_REFRESH_INTERVAL', '60'))
 ALLOW_DEFAULT_TOKEN = os.getenv('SNAT_ALLOW_DEFAULT_TOKEN', '0').lower() in ('1', 'true', 'yes')
 
 # 监听地址：外网部署应绑定到 WireGuard 隧道内网 IP（如 10.66.66.2），不要裸露 0.0.0.0。
-AGENT_HOST = os.getenv('AGENT_HOST', '0.0.0.0')
+AGENT_HOST = os.getenv('AGENT_HOST', '127.0.0.1')
 AGENT_PORT = int(os.getenv('AGENT_PORT', '8888'))
 # 签名请求有效期（秒），用于防重放；面板与 Agent 时钟需大致同步。
 SIGNED_REQUEST_TTL = int(os.getenv('AGENT_SIGNED_REQUEST_TTL', '300'))

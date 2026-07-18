@@ -23,6 +23,10 @@ def servers():
         conn.close()
         return jsonify(server_list)
 
+    if not _app._recent_auth_ok():
+        conn.close()
+        return jsonify({'success': False, 'error': '新增服务器需要重新验证密码', 'reauth_required': True}), 403
+
     data = request.json or {}
     try:
         host = data['host'].strip()

@@ -11,7 +11,7 @@ if [ ! -f "/etc/systemd/system/snat-agent.service" ]; then
     exit 1
 fi
 
-TOKEN=$(grep "AGENT_TOKEN=" /etc/systemd/system/snat-agent.service | cut -d= -f3)
+TOKEN=$(sed -n 's/^AGENT_TOKEN="\(.*\)"$/\1/p' /etc/snat-manager/agent.env 2>/dev/null)
 
 if [ -n "$TOKEN" ]; then
     echo "Agent Token: $TOKEN"

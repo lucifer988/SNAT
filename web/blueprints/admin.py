@@ -236,6 +236,7 @@ def export_servers():
             r['token'] = ''  # 脱敏
 
     output = io.StringIO()
+    rows = [_app.csv_safe_row(row) for row in rows]
     writer = csv.DictWriter(output, fieldnames=['name', 'host', 'port', 'token', 'status'])
     writer.writeheader()
     writer.writerows(rows)
@@ -258,6 +259,7 @@ def export_rules():
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     output = io.StringIO()
+    rows = [_app.csv_safe_row(row) for row in rows]
     writer = csv.DictWriter(output, fieldnames=['server_id', 'local_port', 'target_host', 'target_ip', 'target_port', 'remark', 'enabled', 'traffic_limit_gb'])
     writer.writeheader()
     writer.writerows(rows)

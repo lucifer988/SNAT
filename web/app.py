@@ -218,6 +218,51 @@ TOKEN_INVALID_DISABLE = True
 # IP 白名单（可选，留空则不限制）
 IP_WHITELIST = []  # 例如：['192.168.1.0/24', '10.0.0.1']
 
+
+def _session_is_valid():
+    """校验服务端会话记录；Cookie 只保存随机 ID，不再单独代表授权。"""
+    sid = session.get('session_id')
+    username = session.get('username')
+    if app.config.get('TESTING') and not sid:
+        return bool(session.get('logged_in') and username)
+    if not sid or not username:
+        return False
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        row = conn.execute(
+            '''SELECT s.expires_at, s.revoked, s.session_version, u.session_version
+               FROM web_sessions s JOIN users u ON u.username=s.username
+               WHERE s.id=? AND s.username=?''',
+            (sid, username),
+        ).fetchone()
+        conn.close()
+        return bool(row and not row[1] and int(row[2]) == int(row[3]) and float(row[0]) > time.time())
+    except sqlite3.Error:
+        return False
+
+
+def create_server_session(username):
+    sid = secrets.token_urlsafe(32)
+    expires_at = time.time() + app.permanent_session_lifetime.total_seconds()
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    version = conn.execute('SELECT session_version FROM users WHERE username=?', (username,)).fetchone()[0]
+    conn.execute(
+        'INSERT INTO web_sessions (id,username,session_version,expires_at) VALUES (?,?,?,?)',
+        (sid, username, version, expires_at),
+    )
+    conn.commit(); conn.close()
+    session['session_id'] = sid
+    session['session_version'] = version
+    return sid
+
+
+def revoke_server_session(sid):
+    if not sid:
+        return
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    conn.execute('UPDATE web_sessions SET revoked=1 WHERE id=?', (sid,))
+    conn.commit(); conn.close()
+
 # CSRF Token 存储（在 session 中）
 
 def check_rate_limit():
@@ -884,7 +929,8 @@ def login_required(f):
             return jsonify({'error': '请求过于频繁'}), 429
         
         # 检查登录状态
-        if not session.get('logged_in'):
+        if not session.get('logged_in') or not _session_is_valid():
+            session.clear()
             return jsonify({'error': '未登录'}), 401
         
         if session.get('must_change_password') and request.path not in ['/api/change_password', '/api/csrf_token', '/logout']:
@@ -942,6 +988,16 @@ def log_event(level, message):
     text = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} [{level}] {message}"
     log_buffer.append(text)
     getattr(app.logger, level.lower(), app.logger.info)(message)
+
+
+def csv_safe_row(row):
+    """阻止 Excel/LibreOffice 把不可信 CSV 单元格解释为公式。"""
+    safe = {}
+    for key, value in dict(row).items():
+        if isinstance(value, str) and value.startswith(('=', '+', '-', '@')):
+            value = "'" + value
+        safe[key] = value
+    return safe
 
 
 def audit_log(action, target='', status='success', detail=''):
@@ -1375,11 +1431,13 @@ def init_db():
         password TEXT NOT NULL,
         must_change_password INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        password_changed_at TIMESTAMP
+        password_changed_at TIMESTAMP,
+        session_version INTEGER DEFAULT 1
     )''')
     for stmt in [
         "ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 1",
-        "ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP"
+        "ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 1"
     ]:
         try:
             c.execute(stmt)
@@ -1394,8 +1452,19 @@ def init_db():
             setup_password = secrets.token_urlsafe(18)
         default_password = hash_password(setup_password)
         c.execute('INSERT INTO users (username, password, must_change_password) VALUES (?, ?, ?)', ('admin', default_password, 1))
-        print(f'[!] 默认用户已创建: admin / {setup_password}')
-        print('[!] 首次登录后必须修改密码！')
+        print('[!] 默认管理员已初始化；初始密码未写入日志。首次登录后必须修改密码。')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS web_sessions (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        session_version INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at REAL NOT NULL,
+        revoked INTEGER DEFAULT 0,
+        FOREIGN KEY (username) REFERENCES users(username)
+    )''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(username)')
+    c.execute('DELETE FROM web_sessions WHERE expires_at <= ?', (time.time(),))
     
     # 服务器表
     c.execute('''CREATE TABLE IF NOT EXISTS servers (

@@ -40,6 +40,7 @@ def login():
         # 登录即视为“刚刚验证过密码”，避免登录后立刻又被要求二次认证。
         session['last_reauth'] = __import__('time').time()
         session.permanent = True
+        _app.create_server_session(username)
         _app.app.logger.info(f"Login success for {username}")
         _app.record_login_attempt(username, True)
         _app.log_event('INFO', f"用户登录成功: {username}")
@@ -56,6 +57,7 @@ def login():
 @bp.route('/logout')
 def logout():
     user = session.get('username', '-')
+    _app.revoke_server_session(session.get('session_id'))
     session.clear()
     _app.log_event('INFO', f"用户登出: {user}")
     return redirect(url_for('auth.login'))
@@ -79,12 +81,14 @@ def change_password():
 
     if user and _app.verify_password(user[0], old_password):
         c.execute(
-            'UPDATE users SET password = ?, must_change_password = 0, password_changed_at = CURRENT_TIMESTAMP WHERE username = ?',
+            'UPDATE users SET password = ?, must_change_password = 0, password_changed_at = CURRENT_TIMESTAMP, session_version = session_version + 1 WHERE username = ?',
             (_app.hash_password(new_password), session['username'])
         )
+        c.execute('UPDATE web_sessions SET revoked=1 WHERE username=?', (session['username'],))
         conn.commit()
         conn.close()
         session['must_change_password'] = False
+        _app.create_server_session(session['username'])
         _app.log_event('INFO', f"用户修改密码: {session.get('username','-')}")
         _app.audit_log('change_password', session.get('username', '-'))
         return jsonify({'success': True})

@@ -3,8 +3,8 @@
 # 支持交互和非交互模式
 #
 # 非交互用法：
-#   ./install.sh --type web   [--password 密码]
-#   ./install.sh --type agent [--port 8888] [--token TOKEN]
+#   SNAT_COMMIT_SHA=$(git rev-parse HEAD) ./install.sh --type web
+# 密码和 Token 不接受命令行参数，避免泄露到历史记录和进程列表。
 
 set -e
 
@@ -19,6 +19,7 @@ log_error() { echo -e "${RED}[x]${NC} $1"; }
 
 REPO_URL="${SNAT_REPO_URL:-https://github.com/lucifer988/SNAT.git}"
 REPO_BRANCH="${SNAT_REPO_BRANCH:-main}"
+REPO_COMMIT="${SNAT_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 WORK_DIR="${SNAT_INSTALL_SRC:-/tmp/snat-manager-src}"
 
 echo "======================================"
@@ -35,9 +36,8 @@ DEPLOY_MODE=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --type)     INSTALL_TYPE="$2"; shift 2 ;;
-        --password) ADMIN_PASSWORD="$2"; shift 2 ;;
+        --password|--token) log_error "$1 已禁用；请使用交互式隐藏输入"; exit 1 ;;
         --port)     AGENT_PORT="$2"; shift 2 ;;
-        --token)    AGENT_TOKEN="$2"; shift 2 ;;
         --mode)     DEPLOY_MODE="$2"; shift 2 ;;
         *) log_error "未知参数: $1"; exit 1 ;;
     esac
@@ -50,6 +50,11 @@ fi
 
 if [ "$EUID" -ne 0 ]; then
     log_error "请使用 sudo 运行此脚本"
+    exit 1
+fi
+
+if ! [[ "$REPO_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    log_error "必须通过 SNAT_COMMIT_SHA 指定完整 40 位提交 SHA"
     exit 1
 fi
 
@@ -71,12 +76,16 @@ git clone --depth=1 --branch "$REPO_BRANCH" "$REPO_URL" "$WORK_DIR" >/dev/null 2
     log_error "git clone 失败"
     exit 1
 }
+git -C "$WORK_DIR" fetch --depth=1 origin "$REPO_COMMIT" >/dev/null 2>&1 || { log_error "无法获取指定提交"; exit 1; }
+git -C "$WORK_DIR" checkout --detach "$REPO_COMMIT" >/dev/null 2>&1
+[ "$(git -C "$WORK_DIR" rev-parse HEAD)" = "$REPO_COMMIT" ] || { log_error "提交校验失败"; exit 1; }
 
 install_web() {
     log_info "安装 Web 管理端..."
 
     if [ -z "$ADMIN_PASSWORD" ]; then
-        read -p "请输入管理员初始密码（留空自动生成强密码）: " ADMIN_PASSWORD < /dev/tty
+        read -s -p "请输入管理员初始密码（留空自动生成强密码）: " ADMIN_PASSWORD < /dev/tty
+        echo
     fi
 
     mkdir -p /opt/snat-manager/web
@@ -111,6 +120,26 @@ install_web() {
     SNAT_SECRET_KEY=$(openssl rand -hex 32)
     SNAT_TOKEN_SECRET=$(openssl rand -hex 32)
 
+    case "$ADMIN_PASSWORD" in *$'\n'*|*$'\r'*) log_error "管理员密码不能包含换行符"; exit 1;; esac
+    ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD//\\/\\\\}; ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD_ENV//\"/\\\"}
+
+    id -u snat-web >/dev/null 2>&1 || useradd --system --home /opt/snat-manager --shell /usr/sbin/nologin snat-web
+    install -d -o snat-web -g snat-web -m 0700 /etc/snat-manager /opt/snat-manager/web /var/backups/snat-manager
+    chown -R snat-web:snat-web /opt/snat-manager/web /var/backups/snat-manager
+    cat > /etc/snat-manager/web.env <<EOF
+APP_ENV=production
+FORCE_HTTPS=${FORCE_HTTPS_VALUE}
+TRUST_PROXY=${TRUST_PROXY_VALUE}
+SNAT_ADMIN_PASSWORD="${ADMIN_PASSWORD_ENV}"
+SNAT_SECRET_KEY=${SNAT_SECRET_KEY}
+SNAT_TOKEN_SECRET=${SNAT_TOKEN_SECRET}
+BACKUP_DIR=/var/backups/snat-manager
+WEB_HOST=${WEB_HOST}
+WEB_PORT=5000
+EOF
+    chown snat-web:snat-web /etc/snat-manager/web.env
+    chmod 0600 /etc/snat-manager/web.env
+
     cat > /etc/systemd/system/snat-web.service <<EOF
 [Unit]
 Description=SNAT Manager Web
@@ -118,17 +147,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=snat-web
+Group=snat-web
 WorkingDirectory=/opt/snat-manager
-Environment="APP_ENV=production"
-Environment="FORCE_HTTPS=${FORCE_HTTPS_VALUE}"
-Environment="TRUST_PROXY=${TRUST_PROXY_VALUE}"
-Environment="SNAT_ADMIN_PASSWORD=${ADMIN_PASSWORD}"
-Environment="SNAT_SECRET_KEY=${SNAT_SECRET_KEY}"
-Environment="SNAT_TOKEN_SECRET=${SNAT_TOKEN_SECRET}"
-Environment="BACKUP_DIR=/var/backups/snat-manager"
-Environment="WEB_HOST=${WEB_HOST}"
-Environment="WEB_PORT=5000"
+EnvironmentFile=/etc/snat-manager/web.env
 # 会话有效期（小时，滑动续期）。公网面板建议偏短，默认 12h：
 #Environment="SNAT_SESSION_LIFETIME_HOURS=12"
 # 敏感操作（导出含 token/恢复备份/改密钥/批量删除…）二次认证有效期（秒），默认 600：
@@ -180,11 +202,17 @@ EOF
         exit 1
     fi
 
+    # 初始口令仅用于首次建库；随后从长期服务环境中移除。
+    sed -i '/^SNAT_ADMIN_PASSWORD=/d' /etc/snat-manager/web.env
+    systemctl restart snat-web
+    install -m 0600 /dev/null /root/.snat-manager-initial-password
+    printf 'admin:%s\n' "$ADMIN_PASSWORD" > /root/.snat-manager-initial-password
+
     echo
     log_info "Web 管理端安装完成"
     echo "${ACCESS_HINT}"
     echo "管理员账号：admin"
-    echo "管理员密码：${ADMIN_PASSWORD}"
+    echo "初始密码保存在 /root/.snat-manager-initial-password（root 0600，登录后请删除）"
 }
 
 install_agent() {
@@ -248,8 +276,23 @@ install_agent() {
     apt-get install -y conntrack 2>/dev/null || log_warn "conntrack 安装失败，将回退到 ss"
 
     if [ -z "$AGENT_TOKEN" ]; then
-        AGENT_TOKEN=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+        read -s -p "请输入 Agent Token（留空自动生成）: " AGENT_TOKEN < /dev/tty
+        echo
+        [ -z "$AGENT_TOKEN" ] && AGENT_TOKEN=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
     fi
+    case "$AGENT_TOKEN" in *$'\n'*|*$'\r'*) log_error "Agent Token 不能包含换行符"; exit 1;; esac
+    AGENT_TOKEN_ENV=${AGENT_TOKEN//\\/\\\\}; AGENT_TOKEN_ENV=${AGENT_TOKEN_ENV//\"/\\\"}
+
+    install -d -o root -g root -m 0700 /etc/snat-manager
+    cat > /etc/snat-manager/agent.env <<EOF
+AGENT_TOKEN="${AGENT_TOKEN_ENV}"
+DNS_REFRESH_INTERVAL=60
+AGENT_HOST=${AGENT_HOST_VALUE}
+AGENT_PORT=${AGENT_PORT}
+AGENT_ALLOWED_IPS=${AGENT_ALLOWED_IPS}
+AGENT_ALLOW_BEARER=0
+EOF
+    chmod 0600 /etc/snat-manager/agent.env
 
     cat > /etc/systemd/system/snat-agent.service <<EOF
 [Unit]
@@ -260,15 +303,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/snat-manager/agent
-Environment="AGENT_TOKEN=${AGENT_TOKEN}"
-Environment="DNS_REFRESH_INTERVAL=60"
+EnvironmentFile=/etc/snat-manager/agent.env
 # 推荐：仅监听内网/WireGuard IP；只有显式选择"公网直连"时才监听 0.0.0.0。
-Environment="AGENT_HOST=${AGENT_HOST_VALUE}"
-Environment="AGENT_PORT=${AGENT_PORT}"
-# 只接受来自面板出口 IP/网段的请求（留空=不限制来源，仅靠签名）。
-Environment="AGENT_ALLOWED_IPS=${AGENT_ALLOWED_IPS}"
-# 默认仅签名严格模式；仅当对接的是无法签名的老面板时才临时设为 1。
-Environment="AGENT_ALLOW_BEARER=0"
 # DNAT 目标默认拒绝回环/私网/CGNAT/ULA/云元数据，降低面板失守后的内网横向风险。
 # 若本机的 SNAT 目标就在私网/回环（常见的“公网端口→内网服务”），取消下一行注释放行：
 #Environment="AGENT_TARGET_ALLOW_PRIVATE=1"
@@ -324,7 +360,6 @@ EOF
     else
         echo "Agent 监听地址：http://${AGENT_HOST_VALUE}:${AGENT_PORT}"
     fi
-    echo "Token: ${AGENT_TOKEN}"
     if [ -n "${AGENT_ALLOWED_IPS}" ]; then
         echo "来源白名单：${AGENT_ALLOWED_IPS}（仅这些 IP 可访问 Agent）"
     elif [ "$AGENT_HOST_VALUE" = "0.0.0.0" ]; then
@@ -339,7 +374,7 @@ EOF
         echo "  地址：${AGENT_HOST_VALUE}"
     fi
     echo "  端口：${AGENT_PORT}"
-    echo "  Token：${AGENT_TOKEN}"
+    echo "  Token：保存在 /etc/snat-manager/agent.env（root 0600），按需读取，勿复制到日志"
     echo
     if [ "$AGENT_HOST_VALUE" = "0.0.0.0" ]; then
         log_warn "公网直连注意："

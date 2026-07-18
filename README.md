@@ -120,6 +120,7 @@ AGENT_TOKEN=至少32字符的随机值
 
 ```bash
 mkdir -p data/logs data/backups data/agent logs
+sudo chown -R 10001:10001 data
 docker compose up -d --build
 ```
 
@@ -270,8 +271,12 @@ sudo ./wireguard_setup.sh agent <Hub公网IP> <Hub公钥> 10.66.66.2 51820
 systemd 部署更新：
 
 ```bash
-sudo ./update.sh
+SNAT_COMMIT_SHA=<完整40位提交SHA> sudo -E ./update.sh
 ```
+
+安装与更新只接受固定提交 SHA，避免生产服务器以 root 自动执行可变 `main` 分支。systemd 安装的秘密保存在 `/etc/snat-manager/*.env`（`0600`），不会写入 unit；初始管理员密码仅写入 root-only 临时文件，首次登录后应删除。
+
+`/metrics` 默认关闭。需要 Prometheus 时设置 `SNAT_METRICS_TOKEN`，并以 `Authorization: Bearer <token>` 请求。Web 与 Agent 必须走 WireGuard/可信加密内网；Agent 默认只监听回环地址，不能把 Agent 端口裸露公网。
 
 Docker 更新：
 

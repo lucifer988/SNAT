@@ -5,6 +5,7 @@ set -e
 
 REPO_URL="${SNAT_REPO_URL:-https://github.com/lucifer988/SNAT.git}"
 REPO_BRANCH="${SNAT_REPO_BRANCH:-main}"
+REPO_COMMIT="${SNAT_COMMIT_SHA:-}"
 WORK_DIR="${SNAT_UPDATE_SRC:-/tmp/snat-manager-src}"
 
 echo "======================================"
@@ -14,6 +15,11 @@ echo
 
 if [ "$EUID" -ne 0 ]; then
     echo "错误：请使用 sudo 运行此脚本"
+    exit 1
+fi
+
+if ! [[ "$REPO_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "错误：必须显式设置完整 SNAT_COMMIT_SHA，禁止自动追踪可变分支"
     exit 1
 fi
 
@@ -52,6 +58,9 @@ echo "[*] 拉取最新源代码 (${REPO_URL} @ ${REPO_BRANCH})..."
 rm -rf "$WORK_DIR"
 git clone --depth=1 --branch "$REPO_BRANCH" "$REPO_URL" "$WORK_DIR" >/dev/null 2>&1 \
     || rollback "git clone 失败"
+git -C "$WORK_DIR" fetch --depth=1 origin "$REPO_COMMIT" >/dev/null 2>&1 || rollback "无法获取指定提交"
+git -C "$WORK_DIR" checkout --detach "$REPO_COMMIT" >/dev/null 2>&1 || rollback "无法检出指定提交"
+[ "$(git -C "$WORK_DIR" rev-parse HEAD)" = "$REPO_COMMIT" ] || rollback "提交校验失败"
 
 # 更新 Web
 if [ -d "/opt/snat-manager/web" ]; then
@@ -115,14 +124,15 @@ if [ -d "/opt/snat-manager/agent" ]; then
     # 升级 agent unit 到 gunicorn，并补齐 AGENT_HOST/AGENT_PORT/AGENT_ALLOW_BEARER/AGENT_ALLOWED_IPS
     if [ -f "$AGENT_UNIT" ] && grep -q "ExecStart=/usr/bin/python3" "$AGENT_UNIT" 2>/dev/null; then
         echo "[*] 升级 snat-agent unit 到 gunicorn (保留端口 ${OLD_PORT})..."
-        grep -q 'AGENT_HOST=' "$AGENT_UNIT" || sed -i '/Environment="DNS_REFRESH_INTERVAL/a Environment="AGENT_HOST=0.0.0.0"' "$AGENT_UNIT"
+        OLD_HOST=$(grep -oE 'AGENT_HOST=[^" ]+' "$AGENT_UNIT" | head -1 | cut -d= -f2)
+        [ -n "$OLD_HOST" ] || rollback "无法确定旧 Agent 监听地址；为避免 fail-open，请先显式配置 AGENT_HOST"
         grep -q 'AGENT_PORT=' "$AGENT_UNIT" || sed -i "/Environment=\"AGENT_HOST/a Environment=\"AGENT_PORT=${OLD_PORT}\"" "$AGENT_UNIT"
-        # 升级路径保留 Bearer 回退(=1)，避免旧面板升级中途断连；面板确认走签名后请手动改 0。
-        grep -q 'AGENT_ALLOW_BEARER=' "$AGENT_UNIT" || sed -i '/Environment="AGENT_PORT/a Environment="AGENT_ALLOW_BEARER=1"' "$AGENT_UNIT"
+        # 升级默认保持严格 HMAC 模式，不得自动打开 Bearer 回退。
+        grep -q 'AGENT_ALLOW_BEARER=' "$AGENT_UNIT" || sed -i '/Environment="AGENT_PORT/a Environment="AGENT_ALLOW_BEARER=0"' "$AGENT_UNIT"
         # 来源 IP 白名单默认留空(=不限制)，保持升级不破坏现有连通性；公网直连请手动填面板出口 IP。
         grep -q 'AGENT_ALLOWED_IPS=' "$AGENT_UNIT" || sed -i '/Environment="AGENT_ALLOW_BEARER/a Environment="AGENT_ALLOWED_IPS="' "$AGENT_UNIT"
         sed -i \
-            -e "s|ExecStart=/usr/bin/python3 .*|ExecStart=/usr/bin/gunicorn --chdir /opt/snat-manager/agent --workers 1 --threads 4 --timeout 60 --bind 0.0.0.0:${OLD_PORT} --access-logfile - wsgi:app|" \
+            -e "s|ExecStart=/usr/bin/python3 .*|ExecStart=/usr/bin/gunicorn --chdir /opt/snat-manager/agent --workers 1 --threads 4 --timeout 60 --bind ${OLD_HOST}:${OLD_PORT} --access-logfile - wsgi:app|" \
             "$AGENT_UNIT"
         systemctl daemon-reload
     fi

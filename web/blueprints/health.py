@@ -1,6 +1,8 @@
 """Health probe blueprint. Returns a minimal payload (no env/config leakage)."""
+import hmac
+import os
 import sqlite3
-from flask import Blueprint, jsonify, Response
+from flask import Blueprint, jsonify, Response, request
 from web import app as _app  # 仅引用模块，避免循环 import
 
 bp = Blueprint('health', __name__)
@@ -19,6 +21,12 @@ def healthz():
 
 @bp.route('/metrics', methods=['GET'])
 def metrics():
+    token = os.getenv('SNAT_METRICS_TOKEN', '')
+    if not token:
+        return Response('not found\n', status=404, mimetype='text/plain')
+    supplied = request.headers.get('Authorization', '')
+    if not supplied.startswith('Bearer ') or not hmac.compare_digest(supplied[7:], token):
+        return Response('unauthorized\n', status=401, mimetype='text/plain')
     try:
         conn = sqlite3.connect(_app.DB_FILE, timeout=10)
         c = conn.cursor()

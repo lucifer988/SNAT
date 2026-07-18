@@ -23,6 +23,10 @@ def rules():
         conn.close()
         return jsonify(rows)
 
+    if not _app._recent_auth_ok():
+        conn.close()
+        return jsonify({'success': False, 'error': '网络变更需要重新验证密码', 'reauth_required': True}), 403
+
     data = request.json or {}
     required = ('server_id', 'local_port', 'target_ip', 'target_port')
     missing = [k for k in required if data.get(k) in (None, '')]
@@ -122,6 +126,7 @@ def _rollback_rule(rule_id):
 
 @bp.route('/api/rules/<int:rule_id>', methods=['PUT', 'DELETE'])
 @_app.login_required
+@_app.require_recent_auth()
 def update_or_delete_rule(rule_id):
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -245,6 +250,7 @@ def update_or_delete_rule(rule_id):
 
 @bp.route('/api/rules/<int:rule_id>/toggle', methods=['POST'])
 @_app.login_required
+@_app.require_recent_auth()
 def toggle_rule(rule_id):
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -303,15 +309,13 @@ def toggle_rule(rule_id):
 
 @bp.route('/api/rules/bulk', methods=['POST'])
 @_app.login_required
+@_app.require_recent_auth()
 def bulk_rules():
     data = request.json or {}
     action = data.get('action')
     rule_ids = data.get('rule_ids', [])
     if not isinstance(rule_ids, list) or not rule_ids:
         return jsonify({'success': False, 'error': 'rule_ids 不能为空'}), 400
-    # 批量删除是高危动作：要求会话最近二次验证过密码，防会话被盗后一步清空规则。
-    if action == 'delete' and not _app._recent_auth_ok():
-        return jsonify({'success': False, 'error': '批量删除需要重新验证密码', 'reauth_required': True}), 403
 
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -353,6 +357,7 @@ def bulk_rules():
 
 @bp.route('/api/rules/reconcile', methods=['POST'])
 @_app.login_required
+@_app.require_recent_auth()
 def reconcile_rules():
     conn=sqlite3.connect(_app.DB_FILE,timeout=10); conn.row_factory=sqlite3.Row; c=conn.cursor()
     c.execute('SELECT r.*,s.host,s.port,s.token FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.enabled=1 ORDER BY r.id')
@@ -375,6 +380,7 @@ def reconcile_rules():
 
 @bp.route('/api/restore/reapply', methods=['POST'])
 @_app.login_required
+@_app.require_recent_auth()
 def restore_reapply():
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
