@@ -123,7 +123,7 @@ def alert_settings():
             'tg_bot_token_set': bool(token),
             'tg_chat_id': _app.get_setting('tg_chat_id', ''),
             'offline_seconds': int(_app.get_setting('alert_offline_seconds', '300') or '300'),
-            'command_enabled': _app._setting_bool('tg_command_enabled', '1'),
+            'command_enabled': _app._setting_bool('tg_command_enabled', '0'),
             'daily_summary_enabled': _app._setting_bool('tg_enable_daily_summary', '1'),
             'daily_summary_time': _app.get_setting('tg_daily_summary_time', '09:00') or '09:00',
             'audit_enabled': _app._setting_bool('tg_enable_audit', '1'),
@@ -142,7 +142,7 @@ def alert_settings():
         _app.set_setting('alert_offline_seconds', str(int(data.get('offline_seconds', 300))))
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'offline_seconds 必须为整数'}), 400
-    _app.set_setting('tg_command_enabled', '1' if data.get('command_enabled', True) else '0')
+    _app.set_setting('tg_command_enabled', '1' if data.get('command_enabled', False) else '0')
     _app.set_setting('tg_enable_daily_summary', '1' if data.get('daily_summary_enabled', True) else '0')
     _app.set_setting('tg_daily_summary_time', str((data.get('daily_summary_time') or '09:00')).strip()[:5] or '09:00')
     _app.set_setting('tg_enable_audit', '1' if data.get('audit_enabled', True) else '0')

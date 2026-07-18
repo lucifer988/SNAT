@@ -295,8 +295,8 @@ LockPersonality=yes
 # 只放行 Agent 需要写入的目录（规则文件 / 日志）。
 ReadWritePaths=/var/lib/snat-agent /var/log
 # 注意：不设 ProtectKernelTunables，否则 /proc/sys 只读会让 sysctl 打开 ip_forward 失败。
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
 # 需要 AF_NETLINK 供 iptables/conntrack 与内核通信。
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 

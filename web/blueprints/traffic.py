@@ -42,19 +42,18 @@ def check_all_traffic():
                     limit_bytes = rule['traffic_limit_gb'] * (1024 ** 3)
                     if total_bytes >= limit_bytes:
                         _app.log_event('WARNING', f"规则 {rule['id']} 超限: {total_bytes} >= {limit_bytes}")
+                        stopped=False
                         try:
-                            _app.agent_post(
-                                f"http://{rule['host']}:{rule['port']}/check_traffic_limit",
-                                _app.decrypt_token(rule['token']),
-                                {'local_port': rule['local_port'],
-                                 'traffic_limit_gb': rule['traffic_limit_gb'],
-                                 'current_bytes': total_bytes},
-                                timeout=3
-                            )
-                        except Exception:
-                            pass
-                        c.execute('UPDATE rules SET enabled = 0 WHERE id = ?', (rule['id'],))
-                        stopped_rules.append(rule['id'])
+                            stop=_app.agent_post(f"http://{rule['host']}:{rule['port']}/check_traffic_limit",_app.decrypt_token(rule['token']),{'local_port':rule['local_port'],'traffic_limit_gb':rule['traffic_limit_gb'],'current_bytes':total_bytes},timeout=3)
+                            stop_payload = stop.json() or {}
+                            stopped=(stop.status_code==200
+                                     and stop_payload.get('success') is True
+                                     and stop_payload.get('stopped') is True
+                                     and stop_payload.get('verified') is True)
+                        except Exception: pass
+                        if stopped:
+                            c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?",(rule['id'],)); stopped_rules.append(rule['id'])
+                        else: c.execute("UPDATE rules SET status='desynced' WHERE id=?",(rule['id'],))
             else:
                 _app.log_event('ERROR', f"规则 {rule['id']} 流量查询失败: HTTP {resp.status_code}")
         except Exception as e:

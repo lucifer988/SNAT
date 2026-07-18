@@ -124,7 +124,7 @@ def agent_get(url, token, timeout=5):
     return requests.get(url, headers=build_agent_headers(token, 'GET', path, ''), timeout=timeout, allow_redirects=False)
 
 # 持久化 secret_key，避免重启后所有 session 失效
-_SECRET_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.secret_key')
+_SECRET_KEY_FILE = os.getenv('SNAT_SECRET_KEY_FILE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '.secret_key')
 def _load_secret_key():
     # 优先用环境变量注入（install.sh / systemd / Secrets Manager 已提供 SNAT_SECRET_KEY），
     # 这样密钥不必落到磁盘文件，便于集中托管与轮换；未提供时再回退到文件持久化。
@@ -183,9 +183,9 @@ app.config['SESSION_COOKIE_SECURE'] = FORCE_HTTPS
 # 限制请求体大小：import/restore 等接口接收 JSON 数组，单进程下超大 body 会撑爆内存。
 # 默认 4MB，足够正常导入；超限由 Werkzeug 直接返回 413，不进入业务逻辑。
 app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('WEB_MAX_CONTENT_LENGTH', str(4 * 1024 * 1024)))
-DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_manager.db')
+DB_FILE = os.getenv('SNAT_DB_FILE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_manager.db')
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_web.log')
+LOG_FILE = os.getenv('SNAT_LOG_FILE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snat_web.log')
 LOG_BUFFER_MAX = 500
 log_buffer = deque(maxlen=LOG_BUFFER_MAX)
 BACKUP_RETENTION = int(os.getenv('SNAT_BACKUP_RETENTION', '30'))
@@ -1182,12 +1182,12 @@ def _telegram_polling_loop():
     offset = 0
     while True:
         try:
-            if not _setting_bool('tg_command_enabled', '1'):
+            if not _setting_bool('tg_command_enabled', '0'):
                 time.sleep(15)
                 continue
             bot_token = get_secret_setting('tg_bot_token', '')
             allowed_chat_id = str(get_setting('tg_chat_id', '')).strip()
-            if not bot_token:
+            if not bot_token or not allowed_chat_id:
                 time.sleep(15)
                 continue
             resp = requests.get(
@@ -1286,6 +1286,19 @@ def _check_traffic_once():
             if int(rule.get('traffic_limit_gb', 0) or 0) > 0:
                 limit_bytes = int(rule['traffic_limit_gb']) * (1024 ** 3)
                 if total_bytes >= limit_bytes:
+                    stopped=False
+                    try:
+                        stop=agent_post(f"http://{rule['host']}:{rule['port']}/check_traffic_limit",decrypt_token(rule['token']),{'local_port':rule['local_port'],'traffic_limit_gb':rule['traffic_limit_gb'],'current_bytes':total_bytes},timeout=3)
+                        stop_payload = stop.json() or {}
+                        stopped=(stop.status_code==200
+                                 and stop_payload.get('success') is True
+                                 and stop_payload.get('stopped') is True
+                                 and stop_payload.get('verified') is True)
+                    except Exception: pass
+                    conn=sqlite3.connect(DB_FILE,timeout=10); c=conn.cursor()
+                    if stopped: c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?",(rule['id'],))
+                    else: c.execute("UPDATE rules SET status='desynced' WHERE id=?",(rule['id'],))
+                    conn.commit(); conn.close()
                     telegram_notify(
                         f'🚨 SNAT规则流量超限\n节点: {rule["server_name"]}\n端口: {rule["local_port"]}\n目标: {rule["target_ip"]}:{rule["target_port"]}\n已用: {format(total_bytes / (1024 ** 3), ".2f")} GB\n限制: {rule["traffic_limit_gb"]} GB',
                         dedupe_key=f'traffic-limit:{rule["id"]}',
@@ -1342,7 +1355,7 @@ def mark_token_invalid(server_id, reason):
              ('token_invalid', server_id))
     disabled = 0
     if TOKEN_INVALID_DISABLE:
-        c.execute('UPDATE rules SET enabled = 0 WHERE server_id = ? AND enabled = 1', (server_id,))
+        c.execute("UPDATE rules SET enabled=0,status='unknown' WHERE server_id=? AND enabled=1",(server_id,))
         disabled = c.rowcount
     conn.commit()
     conn.close()
@@ -1592,8 +1605,25 @@ def sync_server_rules(server_id, log_prefix=''):
 
     server = dict(server_row)
     c.execute('SELECT * FROM rules WHERE server_id = ? AND enabled = 1 ORDER BY id', (server_id,))
-    desired_rules = [dict(r) for r in c.fetchall()]
+    enabled_rules = [dict(r) for r in c.fetchall()]
     conn.close()
+    over_limit_rules = [
+        rule for rule in enabled_rules
+        if int(rule.get('traffic_limit_gb', 0) or 0) > 0
+        and int(rule.get('traffic_used_bytes', 0) or 0)
+        >= int(rule.get('traffic_limit_gb', 0)) * 1024 ** 3
+    ]
+    if over_limit_rules:
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        c = conn.cursor()
+        c.executemany(
+            "UPDATE rules SET enabled=0,status='active' WHERE id=?",
+            [(rule['id'],) for rule in over_limit_rules],
+        )
+        conn.commit()
+        conn.close()
+    over_limit_ids = {rule['id'] for rule in over_limit_rules}
+    desired_rules = [rule for rule in enabled_rules if rule['id'] not in over_limit_ids]
 
     token = decrypt_token(server['token'])
     base_url = f"http://{server['host']}:{server['port']}"
@@ -1616,8 +1646,14 @@ def sync_server_rules(server_id, log_prefix=''):
         remote_payload = {}
     remote_rules = remote_payload.get('rules', remote_payload) if isinstance(remote_payload, dict) else {}
 
+    enabled_by_port = {str(rule['local_port']): rule for rule in enabled_rules}
     desired_by_port = {str(rule['local_port']): rule for rule in desired_rules}
     remote_by_port = {str(p): v for p, v in remote_rules.items()}
+    suspended={p for p,v in remote_by_port.items() if isinstance(v,dict) and v.get('suspended')}
+    ids=[enabled_by_port[p]['id'] for p in suspended if p in enabled_by_port]
+    if ids:
+        conn=sqlite3.connect(DB_FILE,timeout=10); c=conn.cursor(); c.executemany('UPDATE rules SET enabled=0 WHERE id=?',[(x,) for x in ids]); conn.commit(); conn.close()
+        for p in suspended: desired_by_port.pop(p,None); remote_by_port.pop(p,None)
 
     # ---- 构建期望差异 ----
     to_delete = []   # 仅远端有，本地无 → 删
@@ -1656,16 +1692,25 @@ def sync_server_rules(server_id, log_prefix=''):
             'local_port': rule['local_port'],
             'target_ip': rule['target_ip'],
             'target_host': rule.get('target_host', '') or rule['target_ip'],
-            'target_port': rule['target_port']
+            'target_port': rule['target_port'],
+            'traffic_limit_gb': int(rule.get('traffic_limit_gb',0) or 0)
         }
         return agent_post(f"{base_url}/add_rule", token, payload, timeout=5)
+
+    def _agent_confirmed(response):
+        if response is None or response.status_code != 200:
+            return False
+        try:
+            return (response.json() or {}).get('success') is True
+        except (ValueError, TypeError):
+            return False
 
     # 1) 先删 (orphan)
     for port_key in to_delete:
         del_resp, del_err = _retry_agent_call(lambda pk=port_key: _do_delete(pk))
         if del_err is not None:
             results.append({'local_port': int(port_key), 'status': 'delete_error', 'error': str(del_err)})
-        elif del_resp.status_code == 200:
+        elif _agent_confirmed(del_resp):
             results.append({'local_port': int(port_key), 'status': 'deleted'})
         else:
             results.append({'local_port': int(port_key), 'status': 'delete_failed', 'http': del_resp.status_code})
@@ -1674,7 +1719,7 @@ def sync_server_rules(server_id, log_prefix=''):
     for rule in to_replace:
         port_key = str(rule['local_port'])
         del_resp, del_err = _retry_agent_call(lambda pk=port_key: _do_delete(pk))
-        if del_err is not None or (del_resp is not None and del_resp.status_code != 200):
+        if del_err is not None or not _agent_confirmed(del_resp):
             failed_rule_ids.add(rule['id'])
             results.append({
                 'rule_id': rule['id'], 'local_port': rule['local_port'],
@@ -1686,7 +1731,7 @@ def sync_server_rules(server_id, log_prefix=''):
         if add_err is not None:
             failed_rule_ids.add(rule['id'])
             results.append({'rule_id': rule['id'], 'local_port': rule['local_port'], 'status': 'replace_error', 'error': str(add_err)})
-        elif add_resp.status_code == 200:
+        elif _agent_confirmed(add_resp):
             succeeded_rule_ids.add(rule['id'])
             results.append({'rule_id': rule['id'], 'local_port': rule['local_port'], 'status': 'replaced'})
         else:
@@ -1699,7 +1744,7 @@ def sync_server_rules(server_id, log_prefix=''):
         if add_err is not None:
             failed_rule_ids.add(rule['id'])
             results.append({'rule_id': rule['id'], 'local_port': rule['local_port'], 'status': 'add_error', 'error': str(add_err)})
-        elif add_resp.status_code == 200:
+        elif _agent_confirmed(add_resp):
             succeeded_rule_ids.add(rule['id'])
             item = {'rule_id': rule['id'], 'local_port': rule['local_port'], 'status': 'added'}
             try:

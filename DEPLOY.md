@@ -1,5 +1,11 @@
 # SNAT Manager 部署与加固指南（内网 / 外网）
 
+> **第七轮升级注意**
+>
+> 1. `AGENT_SET_FORWARD_POLICY_ACCEPT` 默认改为 `0`；项目之外的转发需求请单独配置放行规则。
+> 2. Docker Web 数据改放在 `./data:/data`。旧部署升级前需把旧卷中的 `snat_manager.db` 和 `.secret_key` 分别迁移为 `./data/snat_manager.db`、`./data/secret_key`。
+> 3. Agent 拒绝弱 Token 和短于 16 字符的 Token，推荐使用 `openssl rand -hex 32`。
+
 本文档对应一次安全加固改造，核心变化：
 
 1. **Agent 强制 HMAC 验签 + 防重放 + 常量时间比较** —— 面板下发的每个请求（含 GET）都带
@@ -76,8 +82,8 @@ systemctl daemon-reload && systemctl restart snat-agent
 
 ## 三、迁移与「仅签名」严格模式
 
-为了**不中断已在跑的转发**，Agent 默认 `AGENT_ALLOW_BEARER=1`：既接受新面板的签名请求，
-也兼容尚未升级的旧面板的 Bearer 请求（会打 WARNING 日志）。
+Agent 默认 `AGENT_ALLOW_BEARER=0`，只接受带 nonce 的 HMAC 签名请求。仅在迁移旧面板时，
+才临时显式设置 `AGENT_ALLOW_BEARER=1` 兼容 Bearer 请求（会打 WARNING 日志）。
 
 升级顺序建议：
 1. 先 `update.sh` 升级所有 **Agent**（此时同时兼容新旧面板）。
@@ -101,7 +107,7 @@ systemctl daemon-reload && systemctl restart snat-agent
 |------|----|------|------|
 | `AGENT_HOST` | Agent | `0.0.0.0` | 监听地址。外网务必设为 WG 内网 IP |
 | `AGENT_PORT` | Agent | `8888` | 监听端口 |
-| `AGENT_ALLOW_BEARER` | Agent | `1` | 迁移期兼容旧 Bearer；完成后设 `0` |
+| `AGENT_ALLOW_BEARER` | Agent | `0` | 严格签名模式；迁移旧面板时才临时设 `1` |
 | `AGENT_SIGNED_REQUEST_TTL` | Agent | `300` | 签名有效期（秒），防重放窗口 |
 | `AGENT_TOKEN` | Agent | 无（必填） | 与面板共享的密钥，签名与认证的根 |
 | `AGENT_TARGET_ALLOW_ALL` | Agent | `0` | 置 1 可放行任意 DNAT 目标（含链路本地/元数据）。默认拒绝 169.254/fe80 |

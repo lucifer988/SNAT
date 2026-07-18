@@ -77,16 +77,17 @@ def rules():
                 'local_port': data['local_port'],
                 'target_ip': data['target_ip'],
                 'target_host': data.get('target_host', '') or data['target_ip'],
-                'target_port': data['target_port']
+                'target_port': data['target_port'],
+                'traffic_limit_gb': int(traffic_limit or 0)
             },
             timeout=5
         )
-        if resp.status_code != 200:
+        payload = resp.json() or {}
+        if resp.status_code != 200 or payload.get('success') is not True:
             _rollback_rule(rule_id)
             _app.log_event('ERROR', f"规则 {rule_id} 下发失败: HTTP {resp.status_code}，已回滚数据库")
             return jsonify({'success': False, 'error': f'Agent 下发失败 HTTP {resp.status_code}'}), 502
 
-        payload = resp.json() or {}
         if payload.get('resolved_ip') or payload.get('target_host'):
             conn = sqlite3.connect(_app.DB_FILE, timeout=10)
             c = conn.cursor()
@@ -168,39 +169,29 @@ def update_or_delete_rule(rule_id):
                 return jsonify({'success': False, 'error': '该服务器端口已存在规则'}), 400
 
         if port_changed or ip_changed or target_port_changed or host_changed:
+            token = _app.decrypt_token(rule['token']); base=f"http://{rule['host']}:{rule['port']}"
             try:
-                _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/delete_rule",
-                    _app.decrypt_token(rule['token']),
-                    {'local_port': rule['local_port']},
-                    timeout=5
-                )
-            except Exception:
-                pass
-
+                deleted=_app.agent_post(base+'/delete_rule',token,{'local_port':rule['local_port']},timeout=5)
+                if deleted.status_code!=200 or (deleted.json() or {}).get('success') is not True:
+                    conn.close(); return jsonify({'success':False,'error':'删除旧规则未确认成功，编辑已中止'}),500
+            except Exception as exc:
+                conn.close(); return jsonify({'success':False,'error':f'删除旧规则失败，编辑已中止: {exc}'}),500
+            def rollback_old():
+                try:
+                    rb=_app.agent_post(base+'/add_rule',token,{'local_port':rule['local_port'],'target_ip':rule['target_ip'],'target_host':rule.get('target_host') or rule['target_ip'],'target_port':rule['target_port'],'traffic_limit_gb':int(rule.get('traffic_limit_gb',0) or 0)},timeout=5)
+                    return rb.status_code==200 and (rb.json() or {}).get('success') is True
+                except Exception: return False
             try:
-                resp = _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/add_rule",
-                    _app.decrypt_token(rule['token']),
-                    {
-                        'local_port': data['local_port'],
-                        'target_ip': data['target_ip'],
-                        'target_host': data.get('target_host', '') or data['target_ip'],
-                        'target_port': data['target_port']
-                    },
-                    timeout=5
-                )
-                if resp.status_code != 200:
-                    conn.close()
-                    return jsonify({'success': False, 'error': f'Agent 更新失败 HTTP {resp.status_code}'}), 500
-
-                payload = resp.json()
-                if payload.get('resolved_ip') or payload.get('target_host'):
-                    data['target_ip'] = payload.get('resolved_ip', data['target_ip'])
-                    data['target_host'] = payload.get('target_host', data.get('target_host', ''))
-            except Exception as e:
-                conn.close()
-                return jsonify({'success': False, 'error': f'Agent 更新异常: {str(e)}'}), 500
+                resp=_app.agent_post(base+'/add_rule',token,{'local_port':data['local_port'],'target_ip':data['target_ip'],'target_host':data.get('target_host') or data['target_ip'],'target_port':data['target_port'],'traffic_limit_gb':int(data.get('traffic_limit_gb',0) or 0)},timeout=5)
+                ok=resp.status_code==200 and (resp.json() or {}).get('success') is True
+            except Exception as exc:
+                ok=False; resp=None
+            if not ok:
+                rolled=rollback_old()
+                if not rolled: c.execute("UPDATE rules SET status='desynced' WHERE id=?",(rule_id,)); conn.commit()
+                conn.close(); return jsonify({'success':False,'error':f'Agent 更新失败（旧规则{"已恢复" if rolled else "恢复失败"}）'}),500
+            payload=resp.json() or {}
+            data['target_ip']=payload.get('resolved_ip',data['target_ip']); data['target_host']=payload.get('target_host',data.get('target_host',''))
 
         c.execute('''UPDATE rules SET local_port=?, target_host=?, target_ip=?, target_port=?, remark=?, traffic_limit_gb=?
                     WHERE id=?''',
@@ -229,7 +220,11 @@ def update_or_delete_rule(rule_id):
             {'local_port': rule['local_port']},
             timeout=5
         )
-        if resp.status_code != 200:
+        try:
+            confirmed = resp.status_code == 200 and (resp.json() or {}).get('success') is True
+        except ValueError:
+            confirmed = False
+        if not confirmed:
             conn.close()
             return jsonify({'success': False, 'error': f'Agent 删除失败 HTTP {resp.status_code}'}), 502
     except Exception as e:
@@ -269,13 +264,27 @@ def toggle_rule(rule_id):
 
     try:
         action = 'add_rule' if new_enabled else 'delete_rule'
+        if action == 'add_rule':
+            payload = {
+                'local_port': rule['local_port'],
+                'target_ip': rule['target_ip'],
+                'target_host': rule.get('target_host', '') or rule['target_ip'],
+                'target_port': rule['target_port'],
+                'traffic_limit_gb': int(rule.get('traffic_limit_gb', 0) or 0),
+            }
+        else:
+            payload = {'local_port': rule['local_port']}
         resp = _app.agent_post(
             f"http://{rule['host']}:{rule['port']}/{action}",
             _app.decrypt_token(rule['token']),
-            {'local_port': rule['local_port'], 'target_ip': rule['target_ip'], 'target_port': rule['target_port']},
+            payload,
             timeout=5
         )
-        if resp.status_code != 200:
+        try:
+            confirmed = resp.status_code == 200 and (resp.json() or {}).get('success') is True
+        except ValueError:
+            confirmed = False
+        if not confirmed:
             conn.close()
             return jsonify({'success': False, 'error': 'Agent 操作失败'}), 500
     except Exception as e:
@@ -314,37 +323,28 @@ def bulk_rules():
     )
     rows = [dict(row) for row in c.fetchall()]
     affected, failed = [], []
+    def confirmed(resp):
+        try: payload=resp.json() or {}
+        except Exception: payload={}
+        return resp.status_code==200 and payload.get('success') is True
     for rule in rows:
         try:
-            token = _app.decrypt_token(rule['token'])
-            if action == 'enable':
-                _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/add_rule",
-                    token,
-                    {'local_port': rule['local_port'], 'target_ip': rule['target_ip'],
-                     'target_host': rule.get('target_host', '') or rule['target_ip'],
-                     'target_port': rule['target_port']},
-                    timeout=5
-                )
-                c.execute('UPDATE rules SET enabled = 1 WHERE id = ?', (rule['id'],))
-            elif action == 'disable':
-                _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/delete_rule",
-                    token, {'local_port': rule['local_port']}, timeout=5
-                )
-                c.execute('UPDATE rules SET enabled = 0 WHERE id = ?', (rule['id'],))
-            elif action == 'delete':
-                _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/delete_rule",
-                    token, {'local_port': rule['local_port']}, timeout=5
-                )
-                c.execute('DELETE FROM rules WHERE id = ?', (rule['id'],))
+            token=_app.decrypt_token(rule['token'])
+            if action=='enable':
+                resp=_app.agent_post(f"http://{rule['host']}:{rule['port']}/add_rule",token,{'local_port':rule['local_port'],'target_ip':rule['target_ip'],'target_host':rule.get('target_host') or rule['target_ip'],'target_port':rule['target_port'],'traffic_limit_gb':int(rule.get('traffic_limit_gb',0) or 0)},timeout=5)
+                if confirmed(resp): c.execute("UPDATE rules SET enabled=1,status='active' WHERE id=?",(rule['id'],))
+                else: raise RuntimeError(f'Agent 未确认启用 HTTP {resp.status_code}')
+            elif action in ('disable','delete'):
+                resp=_app.agent_post(f"http://{rule['host']}:{rule['port']}/delete_rule",token,{'local_port':rule['local_port']},timeout=5)
+                if not confirmed(resp): raise RuntimeError(f'Agent 未确认删除 HTTP {resp.status_code}')
+                if action=='disable': c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?",(rule['id'],))
+                else: c.execute('DELETE FROM rules WHERE id=?',(rule['id'],))
             else:
-                conn.close()
-                return jsonify({'success': False, 'error': '不支持的 action'}), 400
+                conn.close(); return jsonify({'success':False,'error':'不支持的 action'}),400
             affected.append(rule['id'])
-        except Exception as e:
-            failed.append({'id': rule['id'], 'error': str(e)})
+        except Exception as exc:
+            c.execute("UPDATE rules SET status='desynced' WHERE id=?",(rule['id'],))
+            failed.append({'id':rule['id'],'error':str(exc)})
     conn.commit()
     conn.close()
     _app.log_event('INFO', f'批量规则操作 {action}: 成功 {len(affected)} 条, 失败 {len(failed)} 条')
@@ -354,37 +354,23 @@ def bulk_rules():
 @bp.route('/api/rules/reconcile', methods=['POST'])
 @_app.login_required
 def reconcile_rules():
-    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute('SELECT r.*, s.host, s.port, s.token FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.enabled = 1 ORDER BY r.id')
-    rule_rows = [dict(r) for r in c.fetchall()]
-    conn.close()
-    results = []
-    for rule in rule_rows:
-        token = _app.decrypt_token(rule['token'])
+    conn=sqlite3.connect(_app.DB_FILE,timeout=10); conn.row_factory=sqlite3.Row; c=conn.cursor()
+    c.execute('SELECT r.*,s.host,s.port,s.token FROM rules r JOIN servers s ON r.server_id=s.id WHERE r.enabled=1 ORDER BY r.id')
+    rows=[dict(x) for x in c.fetchall()]; results=[]
+    for rule in rows:
         try:
-            resp = _app.agent_get(
-                f"http://{rule['host']}:{rule['port']}/list_rules", token, timeout=5
-            )
-            remote = resp.json() if resp.status_code == 200 else {}
-            port_key = str(rule['local_port'])
-            if port_key not in remote:
-                apply = _app.agent_post(
-                    f"http://{rule['host']}:{rule['port']}/add_rule",
-                    token,
-                    {'local_port': rule['local_port'], 'target_ip': rule['target_ip'],
-                     'target_host': rule.get('target_host', '') or rule['target_ip'],
-                     'target_port': rule['target_port']},
-                    timeout=5
-                )
-                results.append({'rule_id': rule['id'], 'status': 'reapplied' if apply.status_code == 200 else 'failed', 'http': apply.status_code})
-            else:
-                results.append({'rule_id': rule['id'], 'status': 'ok'})
-        except Exception as e:
-            results.append({'rule_id': rule['id'], 'status': 'error', 'error': str(e)})
-    _app.audit_log('reconcile_rules', 'rules', 'success', _app.json.dumps(results, ensure_ascii=False))
-    return jsonify({'success': True, 'results': results})
+            token=_app.decrypt_token(rule['token']); resp=_app.agent_get(f"http://{rule['host']}:{rule['port']}/list_rules",token,timeout=5)
+            remote=(resp.json() or {}); remote=remote.get('rules',remote); entry=remote.get(str(rule['local_port']))
+            limit=int(rule.get('traffic_limit_gb',0) or 0); over=limit>0 and int(rule.get('traffic_used_bytes',0) or 0)>=limit*1024**3
+            if isinstance(entry,dict) and entry.get('suspended'):
+                c.execute('UPDATE rules SET enabled=0 WHERE id=?',(rule['id'],)); results.append({'rule_id':rule['id'],'status':'remote_suspended'}); continue
+            if entry is None:
+                if over: c.execute('UPDATE rules SET enabled=0 WHERE id=?',(rule['id'],)); results.append({'rule_id':rule['id'],'status':'over_limit_skipped'}); continue
+                add=_app.agent_post(f"http://{rule['host']}:{rule['port']}/add_rule",token,{'local_port':rule['local_port'],'target_ip':rule['target_ip'],'target_host':rule.get('target_host') or rule['target_ip'],'target_port':rule['target_port'],'traffic_limit_gb':limit},timeout=5)
+                results.append({'rule_id':rule['id'],'status':'reapplied' if add.status_code==200 else 'failed'})
+            else: results.append({'rule_id':rule['id'],'status':'ok'})
+        except Exception as exc: results.append({'rule_id':rule['id'],'status':'error','error':str(exc)})
+    conn.commit(); conn.close(); return jsonify({'success':True,'results':results})
 
 
 @bp.route('/api/restore/reapply', methods=['POST'])
@@ -398,6 +384,9 @@ def restore_reapply():
     conn.close()
     results = []
     for rule in rule_rows:
+        limit=int(rule.get('traffic_limit_gb',0) or 0)
+        if limit>0 and int(rule.get('traffic_used_bytes',0) or 0)>=limit*1024**3:
+            results.append({'rule_id':rule['id'],'status':'over_limit_skipped'}); continue
         token = _app.decrypt_token(rule['token'])
         try:
             resp = _app.agent_post(
@@ -405,7 +394,7 @@ def restore_reapply():
                 token,
                 {'local_port': rule['local_port'], 'target_ip': rule['target_ip'],
                  'target_host': rule.get('target_host', '') or rule['target_ip'],
-                 'target_port': rule['target_port']},
+                 'target_port': rule['target_port'], 'traffic_limit_gb': int(rule.get('traffic_limit_gb', 0) or 0)},
                 timeout=5
             )
             results.append({'rule_id': rule['id'], 'status': 'ok' if resp.status_code == 200 else 'failed', 'http': resp.status_code})

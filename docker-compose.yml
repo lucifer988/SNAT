@@ -20,10 +20,15 @@ services:
       TRUST_PROXY: "${TRUST_PROXY:-0}"
       WEB_HOST: "${WEB_HOST:-0.0.0.0}"
       WEB_PORT: "5000"
+      SNAT_DB_FILE: /data/snat_manager.db
+      SNAT_SECRET_KEY_FILE: /data/secret_key
+      SNAT_LOG_FILE: /data/logs/snat_web.log
+      BACKUP_DIR: /data/backups
     volumes:
-      # 持久化 DB / secret_key / logs（首次启动从镜像内容生成）
-      - snat-web-data:/app/web
-      - ./data/backups:/data/backups
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
     logging:
@@ -47,7 +52,6 @@ services:
       - ALL
     cap_add:
       - NET_ADMIN
-      - NET_RAW
     security_opt:
       - no-new-privileges:true
     environment:
@@ -69,6 +73,3 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-
-volumes:
-  snat-web-data:

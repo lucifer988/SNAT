@@ -281,6 +281,8 @@ function renderTreeRule(r, idx) {
                 <span class="tree-rule-arrow">→</span>
                 <span class="tree-rule-target">${esc(targetDisplay)}:${r.target_port}</span>
                 <span class="tree-rule-status ${r.enabled ? 'enabled' : 'disabled'}">${r.enabled ? '启用' : '禁用'}</span>
+                ${r.status === 'desynced' ? '<span class="tree-rule-status disabled">⚠ 待对账</span>' : ''}
+                ${r.status === 'unknown' ? '<span class="tree-rule-status disabled">⚠ 远端状态未知</span>' : ''}
             </div>
             <div class="tree-rule-info">
                 <span>流量: ${traffic.summaryText}</span>
@@ -448,8 +450,16 @@ async function addServer() {
 
 // 删除服务器
 async function deleteServer(id) {
-    if (!confirm('确定删除此服务器？')) return;
-    await deleteWithCsrf(`/api/servers/${id}`);
+    if (!confirm('确定删除此服务器？删除前会先清理远端规则。')) return;
+    let resp = await deleteWithCsrf(`/api/servers/${id}`);
+    let data = {}; try { data = await resp.json(); } catch (_) {}
+    if (resp.status === 409 && data.require_force) {
+        const detail = (data.cleanup_failed || []).map(x => `端口 ${x.local_port}: ${x.error}`).join('\n');
+        if (!confirm(`远端规则未确认清理：\n${detail}\n\n仍要强制删除面板记录吗？`)) return;
+        resp = await deleteWithCsrf(`/api/servers/${id}?force=1`);
+        try { data = await resp.json(); } catch (_) { data = {}; }
+    }
+    if (!resp.ok) { showError(data.error || '删除失败'); return; }
     loadServers();
     loadRules().then(() => { loadTrafficSummary(); loadConnectionsSummary(); });
 }

@@ -17,47 +17,9 @@ def servers():
     c = conn.cursor()
 
     if request.method == 'GET':
-        c.execute('SELECT * FROM servers ORDER BY id DESC')
-        server_list = [dict(row) for row in c.fetchall()]
-
-        for server in server_list:
-            try:
-                resp = _app.agent_get(
-                    f"http://{server['host']}:{server['port']}/health",
-                    _app.decrypt_token(server['token']),
-                    timeout=2
-                )
-                if resp.status_code == 200:
-                    status = 'online'
-                    try:
-                        c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?',
-                                  (status, server['id']))
-                    except OperationalError as e:
-                        _app.log_event('WARNING', f"更新服务器状态跳过(locked) {server['id']}: {e}")
-                elif resp.status_code == 401:
-                    status = 'token_invalid'
-                    _app.mark_token_invalid(server['id'], 'health 401')
-                else:
-                    status = 'offline'
-                    try:
-                        c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?',
-                                  (status, server['id']))
-                    except OperationalError as e:
-                        _app.log_event('WARNING', f"更新服务器状态跳过(locked) {server['id']}: {e}")
-                server['status'] = status
-            except Exception as e:
-                server['status'] = 'offline'
-                try:
-                    c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?',
-                              ('offline', server['id']))
-                except OperationalError as oe:
-                    _app.log_event('WARNING', f"离线状态写回跳过(locked) {server['id']}: {oe}")
-                _app.log_event('WARNING', f"服务器健康检查失败 {server['id']}: {e}")
-
-        try:
-            conn.commit()
-        except OperationalError as e:
-            _app.log_event('WARNING', f"servers接口提交跳过(locked): {e}")
+        c.execute('SELECT id,name,host,port,status,last_check,created_at FROM servers ORDER BY id DESC')
+        server_list=[dict(row) for row in c.fetchall()]
+        for server in server_list: server['token_set']=True
         conn.close()
         return jsonify(server_list)
 
@@ -98,7 +60,7 @@ def servers():
 def update_server(server_id):
     data = request.json or {}
     # 字段缺失/类型错误时返回 400 而非未捕获异常 500
-    for k in ('name', 'host', 'token'):
+    for k in ('name', 'host'):
         if not isinstance(data.get(k), str) or not data.get(k).strip():
             return jsonify({'success': False, 'error': f'缺少必填字段: {k}'}), 400
     host = data['host'].strip()
@@ -115,9 +77,11 @@ def update_server(server_id):
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     c = conn.cursor()
     try:
-        c.execute('UPDATE servers SET name = ?, host = ?, port = ?, token = ? WHERE id = ?',
-                  (data['name'].strip(), host, port,
-                   _app.encrypt_token(data['token'].strip()), server_id))
+        new_token=(data.get('token') or '').strip()
+        if new_token:
+            c.execute('UPDATE servers SET name=?,host=?,port=?,token=? WHERE id=?',(data['name'].strip(),host,port,_app.encrypt_token(new_token),server_id))
+        else:
+            c.execute('UPDATE servers SET name=?,host=?,port=? WHERE id=?',(data['name'].strip(),host,port,server_id))
         conn.commit()
     except sqlite3.IntegrityError:
         conn.close()
@@ -131,14 +95,23 @@ def update_server(server_id):
 @_app.login_required
 @_app.require_recent_auth()
 def delete_server(server_id):
-    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
-    c = conn.cursor()
-    c.execute('DELETE FROM servers WHERE id = ?', (server_id,))
-    c.execute('DELETE FROM rules WHERE server_id = ?', (server_id,))
-    conn.commit()
-    conn.close()
-    _app.log_event('INFO', f"删除服务器 {server_id}")
-    return jsonify({'success': True})
+    force=request.args.get('force')=='1'
+    conn=sqlite3.connect(_app.DB_FILE,timeout=10); conn.row_factory=sqlite3.Row; c=conn.cursor()
+    server=c.execute('SELECT * FROM servers WHERE id=?',(server_id,)).fetchone()
+    if not server: conn.close(); return jsonify({'success':False,'error':'服务器不存在'}),404
+    server=dict(server); rules=[dict(x) for x in c.execute('SELECT id,local_port FROM rules WHERE server_id=?',(server_id,)).fetchall()]
+    failed=[]
+    for rule in rules:
+        try:
+            resp=_app.agent_post(f"http://{server['host']}:{server['port']}/delete_rule",_app.decrypt_token(server['token']),{'local_port':rule['local_port']},timeout=5)
+            payload=resp.json() or {}
+            if resp.status_code!=200 or payload.get('success') is not True: failed.append({'rule_id':rule['id'],'local_port':rule['local_port'],'error':f'HTTP {resp.status_code}'})
+        except Exception as exc: failed.append({'rule_id':rule['id'],'local_port':rule['local_port'],'error':str(exc)[:200]})
+    if failed and not force:
+        conn.close(); return jsonify({'success':False,'error':'远端规则未确认清理','cleanup_failed':failed,'require_force':True}),409
+    c.execute('DELETE FROM rules WHERE server_id=?',(server_id,)); c.execute('DELETE FROM servers WHERE id=?',(server_id,)); conn.commit(); conn.close()
+    if failed: _app.audit_log('delete_server_forced',str(server_id),'warning',_app.json.dumps({'orphaned':failed},ensure_ascii=False))
+    return jsonify({'success':True,'orphaned':failed})
 
 
 @bp.route('/api/servers/<int:server_id>/check', methods=['GET'])

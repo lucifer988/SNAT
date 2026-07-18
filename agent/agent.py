@@ -118,7 +118,7 @@ _PRIVATE_TARGET_DENY_CIDRS = [
 
 # 是否把 FORWARD 链默认策略设为 ACCEPT。历史行为为 1（保持兼容）；置 0 时只依赖按规则注入的
 # SNAT_*_FWD_IN/OUT ACCEPT（已插在链首），从而避免把本机变成开放转发，缩小被滥用面。
-SET_FORWARD_POLICY_ACCEPT = os.getenv('AGENT_SET_FORWARD_POLICY_ACCEPT', '1').lower() in ('1', 'true', 'yes')
+SET_FORWARD_POLICY_ACCEPT = os.getenv('AGENT_SET_FORWARD_POLICY_ACCEPT', '0').lower() in ('1', 'true', 'yes')
 
 
 def _parse_cidr_list(raw):
@@ -461,16 +461,17 @@ def count_matching_rules(table, chain, fragments):
     return len(lines)
 
 def resolve_target(target):
-    """解析目标地址，返回 (target_host, target_ip)"""
+    """解析 IPv4 目标；当前 iptables 数据面不支持 IPv6。"""
     try:
-        ipaddress.ip_address(target)
+        addr = ipaddress.ip_address(target)
+        if addr.version != 4:
+            logging.warning(f"拒绝 IPv6 目标（当前版本仅支持 IPv4）: {target}")
+            return None, None
         return target, target
     except ValueError:
         pass
-
     try:
-        resolved = socket.gethostbyname(target)
-        return target, resolved
+        return target, socket.gethostbyname(target)
     except Exception as e:
         logging.error(f"目标解析失败: {target} ({e})")
         return None, None
@@ -516,119 +517,139 @@ def remove_duplicate_rules(local_port, target_ip, target_port):
         run_cmd(['iptables', '-t', 'nat', '-D', 'POSTROUTING', '-p', 'tcp', '-d', str(target_ip), '--dport', str(target_port), '-j', 'MASQUERADE'])
 
 
+def _rule_components(local_port, target_ip, target_port):
+    return [
+      ('dnat',['iptables','-t','nat','-C','PREROUTING','-p','tcp','--dport',str(local_port),'-j','DNAT','--to-destination',f'{target_ip}:{target_port}'],['iptables','-t','nat','-A','PREROUTING','-p','tcp','--dport',str(local_port),'-j','DNAT','--to-destination',f'{target_ip}:{target_port}']),
+      ('mangle_in',['iptables','-t','mangle','-C','PREROUTING','-p','tcp','--dport',str(local_port),'-j','RETURN','-m','comment','--comment',f'SNAT_{local_port}_IN'],['iptables','-t','mangle','-I','PREROUTING','1','-p','tcp','--dport',str(local_port),'-j','RETURN','-m','comment','--comment',f'SNAT_{local_port}_IN']),
+      ('mangle_out',['iptables','-t','mangle','-C','PREROUTING','-p','tcp','-s',target_ip,'--sport',str(target_port),'-j','RETURN','-m','comment','--comment',f'SNAT_{local_port}_OUT'],['iptables','-t','mangle','-I','PREROUTING','1','-p','tcp','-s',target_ip,'--sport',str(target_port),'-j','RETURN','-m','comment','--comment',f'SNAT_{local_port}_OUT']),
+      ('forward_in',['iptables','-C','FORWARD','-p','tcp','-d',target_ip,'--dport',str(target_port),'-j','ACCEPT','-m','comment','--comment',f'SNAT_{local_port}_FWD_IN'],['iptables','-I','FORWARD','1','-p','tcp','-d',target_ip,'--dport',str(target_port),'-j','ACCEPT','-m','comment','--comment',f'SNAT_{local_port}_FWD_IN']),
+      ('forward_out',['iptables','-C','FORWARD','-p','tcp','-s',target_ip,'--sport',str(target_port),'-j','ACCEPT','-m','comment','--comment',f'SNAT_{local_port}_FWD_OUT'],['iptables','-I','FORWARD','1','-p','tcp','-s',target_ip,'--sport',str(target_port),'-j','ACCEPT','-m','comment','--comment',f'SNAT_{local_port}_FWD_OUT']),
+      ('postrouting',['iptables','-t','nat','-C','POSTROUTING','-p','tcp','-d',str(target_ip),'--dport',str(target_port),'-j','MASQUERADE'],['iptables','-t','nat','-A','POSTROUTING','-p','tcp','-d',str(target_ip),'--dport',str(target_port),'-j','MASQUERADE'])]
+
+
+def _delete_cmd_for_add(add_cmd):
+    """把本项目生成的 -A/-I 命令转换为等价 -D 规格命令。"""
+    cmd = list(add_cmd)
+    op_index = next(i for i, value in enumerate(cmd) if value in ('-A', '-I'))
+    was_insert = cmd[op_index] == '-I'
+    cmd[op_index] = '-D'
+    if was_insert and op_index + 2 < len(cmd) and cmd[op_index + 2] == '1':
+        del cmd[op_index + 2]
+    return cmd
+
+
+def _check_rule(check_cmd):
+    """返回 (state, error)：state 为 present/absent/error，避免把权限错误当作不存在。"""
+    ok, _, err = run_cmd(check_cmd)
+    if ok:
+        return 'present', ''
+    message = (err or '').strip()
+    lower = message.lower()
+    absent_markers = (
+        'bad rule', 'matching rule exist', 'does a matching rule exist',
+        'rule does not exist', 'no such rule', 'missing',
+    )
+    if any(marker in lower for marker in absent_markers):
+        return 'absent', ''
+    return 'error', message or 'iptables rule check failed without stderr'
+
+
+def _rollback_created_components(created_components):
+    """只逆序撤销本次新增组件，不破坏调用前已存在的规则。"""
+    failures = []
+    for stage, check_cmd, add_cmd in reversed(created_components):
+        delete_cmd = _delete_cmd_for_add(add_cmd)
+        ok, _, err = run_cmd(delete_cmd)
+        if not ok:
+            failures.append({'component': stage, 'error': (err or '')[:200]})
+            continue
+        state, check_error = _check_rule(check_cmd)
+        if state != 'absent':
+            failures.append({
+                'component': f'rollback_verify_{stage}',
+                'error': check_error or '本次新增组件回滚后仍存在',
+            })
+    return not failures, failures
+
+
 def add_snat_rule(local_port, target_ip, target_port, target_host=None):
-    """添加 SNAT 转发规则（幂等）"""
-    display = f"{target_host}({target_ip})" if target_host and target_host != target_ip else target_ip
-    logging.info(f"添加规则: {local_port} -> {display}:{target_port}")
+    """补偿事务式下发：只回滚本次新增组件，并返回真实回滚/校验状态。"""
+    created = []
 
-    # 启用 IP 转发
-    success, _, _ = run_cmd(['sysctl', '-w', 'net.ipv4.ip_forward=1'])
-    if not success:
-        logging.error("启用 IP 转发失败")
-        return False
+    def fail(stage, rollback=True, error=''):
+        rolled_back = False
+        rollback_failures = []
+        if rollback:
+            rolled_back, rollback_failures = _rollback_created_components(created)
+        return {
+            'ok': False,
+            'stage': stage,
+            'rolled_back': rolled_back,
+            'verified': False,
+            'error': error,
+            'rollback_failures': rollback_failures,
+        }
 
-    # 设置 FORWARD 链默认策略为 ACCEPT（可通过 AGENT_SET_FORWARD_POLICY_ACCEPT=0 关闭，
-    # 关闭后仅依赖按规则注入的 SNAT_*_FWD ACCEPT，避免本机成为开放转发）
+    ok, _, err = run_cmd(['sysctl', '-w', 'net.ipv4.ip_forward=1'])
+    if not ok:
+        return fail('ip_forward', False, err)
     if SET_FORWARD_POLICY_ACCEPT:
-        run_cmd(['iptables', '-P', 'FORWARD', 'ACCEPT'])
+        ok, _, err = run_cmd(['iptables', '-P', 'FORWARD', 'ACCEPT'])
+        if not ok:
+            return fail('forward_policy', False, err)
 
-    # 检查 DNAT 规则是否已存在（幂等）
-    success, _, _ = run_cmd(['iptables', '-t', 'nat', '-C', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'DNAT', '--to-destination', f'{target_ip}:{target_port}'])
-    if not success:
-        # 不存在，添加
-        success, _, _ = run_cmd(['iptables', '-t', 'nat', '-A', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'DNAT', '--to-destination', f'{target_ip}:{target_port}'])
-        if not success:
-            logging.error(f"添加 DNAT 规则失败: {local_port}")
-            return False
-    else:
-        logging.info(f"DNAT 规则已存在: {local_port}")
-    # mangle 表：分别记录入/出方向流量，便于后续统计
-    success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-C', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_IN'])
-    if not success:
-        success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-I', 'PREROUTING', '1', '-p', 'tcp', '--dport', str(local_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_IN'])
-        if not success:
-            return False
-    success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-C', 'PREROUTING', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_OUT'])
-    if not success:
-        success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-I', 'PREROUTING', '1', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_OUT'])
-        if not success:
-            return False
-
-    # FORWARD 链：为新规则打上稳定注释，后续统计只认面板托管规则
-    success, _, _ = run_cmd(['iptables', '-C', 'FORWARD', '-p', 'tcp', '-d', target_ip, '--dport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_IN'])
-    if not success:
-        run_cmd(['iptables', '-I', 'FORWARD', '1', '-p', 'tcp', '-d', target_ip, '--dport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_IN'])
-    success, _, _ = run_cmd(['iptables', '-C', 'FORWARD', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_OUT'])
-    if not success:
-        run_cmd(['iptables', '-I', 'FORWARD', '1', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_OUT'])
-
-    # 检查 SNAT 规则是否已存在
-    success, _, _ = run_cmd(['iptables', '-t', 'nat', '-C', 'POSTROUTING', '-p', 'tcp', '-d', str(target_ip), '--dport', str(target_port), '-j', 'MASQUERADE'])
-    if not success:
-        success, _, _ = run_cmd(['iptables', '-t', 'nat', '-A', 'POSTROUTING', '-p', 'tcp', '-d', str(target_ip), '--dport', str(target_port), '-j', 'MASQUERADE'])
-        if not success:
-            logging.error(f"添加 SNAT 规则失败: {target_ip}:{target_port}")
-            return False
-    else:
-        logging.info(f"SNAT 规则已存在: {target_ip}:{target_port}")
+    parts = _rule_components(local_port, target_ip, target_port)
+    for stage, check_cmd, add_cmd in parts:
+        state, check_error = _check_rule(check_cmd)
+        if state == 'error':
+            return fail(f'{stage}_check', bool(created), check_error)
+        if state == 'absent':
+            ok, _, err = run_cmd(add_cmd)
+            if not ok:
+                return fail(stage, bool(created), err)
+            created.append((stage, check_cmd, add_cmd))
 
     remove_duplicate_rules(local_port, target_ip, target_port)
-    logging.info(f"规则添加成功: {local_port} -> {display}:{target_port}")
-    return True
+    for stage, check_cmd, _ in parts:
+        state, check_error = _check_rule(check_cmd)
+        if state != 'present':
+            return fail(f'verify_{stage}', bool(created), check_error or '规则不存在')
+    return {'ok': True, 'stage': 'done', 'rolled_back': False, 'verified': True}
 
-def delete_snat_rule(local_port, target_ip, target_port):
-    """删除 SNAT 转发规则（循环删除直到不存在）"""
-    logging.info(f"删除规则: {local_port} -> {target_ip}:{target_port}")
 
-    # 循环删除 DNAT 规则（可能有重复）
-    while True:
-        success, _, _ = run_cmd(['iptables', '-t', 'nat', '-C', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'DNAT', '--to-destination', f'{target_ip}:{target_port}'])
-        if success:
-            run_cmd(['iptables', '-t', 'nat', '-D', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'DNAT', '--to-destination', f'{target_ip}:{target_port}'])
-            logging.info(f"DNAT 规则已删除: {local_port}")
+def delete_snat_rule(local_port, target_ip, target_port, keep_masquerade=False):
+    """逐组件删除并逐项校验；查询错误和删除错误均不得假成功。"""
+    failures = []
+    parts = _rule_components(local_port, target_ip, target_port)
+    for stage, check_cmd, add_cmd in parts:
+        if stage == 'postrouting' and keep_masquerade:
+            continue
+        delete_cmd = _delete_cmd_for_add(add_cmd)
+        for _ in range(50):
+            state, check_error = _check_rule(check_cmd)
+            if state == 'absent':
+                break
+            if state == 'error':
+                failures.append({'component': f'{stage}_check', 'error': check_error[:200]})
+                break
+            ok, _, err = run_cmd(delete_cmd)
+            if not ok:
+                failures.append({'component': stage, 'error': (err or '')[:200]})
+                break
         else:
-            break
+            failures.append({'component': stage, 'error': '删除次数超过安全上限'})
 
-    # 循环删除 mangle 统计规则
-    while True:
-        success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-C', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_IN'])
-        if success:
-            run_cmd(['iptables', '-t', 'mangle', '-D', 'PREROUTING', '-p', 'tcp', '--dport', str(local_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_IN'])
-        else:
-            break
+        if not any(item['component'] in (stage, f'{stage}_check') for item in failures):
+            state, check_error = _check_rule(check_cmd)
+            if state == 'present':
+                failures.append({'component': f'verify_{stage}', 'error': '规则删除后仍存在'})
+            elif state == 'error':
+                failures.append({'component': f'verify_{stage}', 'error': check_error[:200]})
+    return not failures, failures
 
-    while True:
-        success, _, _ = run_cmd(['iptables', '-t', 'mangle', '-C', 'PREROUTING', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_OUT'])
-        if success:
-            run_cmd(['iptables', '-t', 'mangle', '-D', 'PREROUTING', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'RETURN', '-m', 'comment', '--comment', f'SNAT_{local_port}_OUT'])
-        else:
-            break
 
-    while True:
-        success, _, _ = run_cmd(['iptables', '-C', 'FORWARD', '-p', 'tcp', '-d', target_ip, '--dport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_IN'])
-        if success:
-            run_cmd(['iptables', '-D', 'FORWARD', '-p', 'tcp', '-d', target_ip, '--dport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_IN'])
-        else:
-            break
-
-    while True:
-        success, _, _ = run_cmd(['iptables', '-C', 'FORWARD', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_OUT'])
-        if success:
-            run_cmd(['iptables', '-D', 'FORWARD', '-p', 'tcp', '-s', target_ip, '--sport', str(target_port), '-j', 'ACCEPT', '-m', 'comment', '--comment', f'SNAT_{local_port}_FWD_OUT'])
-        else:
-            break
-
-    # 循环删除 SNAT 规则
-    while True:
-        success, _, _ = run_cmd(['iptables', '-t', 'nat', '-C', 'POSTROUTING', '-p', 'tcp', '-d', str(target_ip), '--dport', str(target_port), '-j', 'MASQUERADE'])
-        if success:
-            run_cmd(['iptables', '-t', 'nat', '-D', 'POSTROUTING', '-p', 'tcp', '-d', str(target_ip), '--dport', str(target_port), '-j', 'MASQUERADE'])
-            logging.info(f"SNAT 规则已删除: {target_ip}:{target_port}")
-        else:
-            break
-
-    logging.info(f"规则删除完成: {local_port}")
-    return True
+def _other_rules_share_target(rules,local_port,target_ip,target_port):
+    return any(str(p)!=str(local_port) and str(r.get('target_ip'))==str(target_ip) and str(r.get('target_port'))==str(target_port) for p,r in rules.items())
 
 @app.route('/add_rule', methods=['POST'])
 def add_rule():
@@ -659,21 +680,24 @@ def add_rule():
 
     # 串行化 iptables + rules.json 改动，避免与 DNS 刷新线程并发冲突
     with STATE_LOCK:
-        success = add_snat_rule(local_port, resolved_ip, target_port, target_host=target_host)
+        result = add_snat_rule(local_port, resolved_ip, target_port, target_host=target_host)
+        if isinstance(result, bool): result={'ok':result,'stage':'legacy','rolled_back':False,'verified':result}
 
-        if success:
+        if result['ok']:
             # 保存到配置文件
             rules = load_rules()
             rules[str(local_port)] = {
                 'target_host': target_host,
                 'target_ip': resolved_ip,
                 'target_port': target_port,
-                'traffic_bytes': 0
+                'traffic_bytes': 0,
+                'last_counter': 0,
+                'traffic_limit_gb': max(0, int(data.get('traffic_limit_gb', 0) or 0))
             }
             save_rules(rules)
-            return jsonify({'success': True, 'target_host': target_host, 'resolved_ip': resolved_ip})
+            return jsonify({'success': True, 'target_host': target_host, 'resolved_ip': resolved_ip, 'stage': result['stage'], 'verified': result['verified']})
         else:
-            return jsonify({'success': False, 'error': 'iptables 命令失败'}), 500
+            return jsonify({'success': False, 'error': 'iptables 命令失败', **result}), 500
 
 def get_forward_counter(port, rule=None):
     """优先读取带注释的 FORWARD 计数；兼容历史未命名旧规则。"""
@@ -788,18 +812,25 @@ def check_traffic_limit():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid traffic figures'}), 400
 
-    # 如果超过限制，自动删除规则
     if traffic_limit_bytes > 0 and current_bytes >= traffic_limit_bytes:
         with STATE_LOCK:
-            rules = load_rules()
-            if str(local_port) in rules:
-                rule = rules[str(local_port)]
-                delete_snat_rule(local_port, rule['target_ip'], rule['target_port'])
-                del rules[str(local_port)]
+            rules = load_rules(); entry = rules.get(str(local_port))
+            if entry and not entry.get('suspended'):
+                keep = _other_rules_share_target(rules, local_port, entry['target_ip'], entry['target_port'])
+                ok, failures = delete_snat_rule(local_port, entry['target_ip'], entry['target_port'], keep)
+                if not ok:
+                    entry.update(suspend_pending=True, suspend_failures=failures)
+                    save_rules(rules)
+                    return jsonify({'success': False, 'stopped': False, 'verified': False,
+                                    'failures': failures}), 500
+                entry.pop('suspend_pending', None)
+                entry.pop('suspend_failures', None)
+                entry.update(suspended=True, suspended_reason='traffic_limit',
+                             suspended_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
                 save_rules(rules)
-                logging.warning(f"规则 {local_port} 已达流量限制，自动停止")
-                return jsonify({'success': True, 'stopped': True})
-
+                return jsonify({'success': True, 'stopped': True, 'verified': True, 'failures': []})
+            if entry and entry.get('suspended'):
+                return jsonify({'success':True,'stopped':True,'verified':True,'already':True})
     return jsonify({'success': True, 'stopped': False})
 
 @app.route('/delete_rule', methods=['POST'])
@@ -820,7 +851,10 @@ def delete_rule():
         rules = load_rules()
         if local_port in rules:
             rule = rules[local_port]
-            delete_snat_rule(int(local_port), rule['target_ip'], rule['target_port'])
+            keep = _other_rules_share_target(rules, local_port, rule['target_ip'], rule['target_port'])
+            ok, failures = delete_snat_rule(int(local_port), rule['target_ip'], rule['target_port'], keep)
+            if not ok:
+                return jsonify({'success':False,'verified':False,'failures':failures}), 500
             del rules[local_port]
             save_rules(rules)
 
@@ -894,6 +928,7 @@ def refresh_dns_rules():
                 rules = load_rules()
                 updated = 0
                 for local_port, rule in rules.items():
+                    if rule.get('suspended'): continue
                     target_host = rule.get('target_host')
                     if not target_host or is_ip_address(target_host):
                         continue
@@ -907,14 +942,27 @@ def refresh_dns_rules():
 
                     old_ip = rule.get('target_ip')
                     target_port = rule.get('target_port')
-                    delete_snat_rule(int(local_port), old_ip, target_port)
-                    success = add_snat_rule(int(local_port), resolved_ip, target_port, target_host=target_host)
-                    if success:
+                    keep_masquerade = _other_rules_share_target(
+                        rules, local_port, old_ip, target_port)
+                    deleted, failures = delete_snat_rule(
+                        int(local_port), old_ip, target_port, keep_masquerade)
+                    if not deleted:
+                        logging.error(
+                            f"DNS 刷新删除旧规则失败: {target_host} {old_ip}:{target_port} "
+                            f"(port {local_port}, failures={failures})")
+                        continue
+                    result = add_snat_rule(
+                        int(local_port), resolved_ip, target_port, target_host=target_host)
+                    if result.get('ok'):
                         rule['target_ip'] = resolved_ip
                         updated += 1
                         logging.info(f"DNS 刷新: {target_host} {old_ip} -> {resolved_ip}:{target_port} (port {local_port})")
                     else:
-                        logging.error(f"DNS 刷新失败: {target_host} -> {resolved_ip}:{target_port} (port {local_port})")
+                        rollback = add_snat_rule(
+                            int(local_port), old_ip, target_port, target_host=target_host)
+                        logging.error(
+                            f"DNS 刷新失败: {target_host} -> {resolved_ip}:{target_port} "
+                            f"(port {local_port}, rollback_ok={rollback.get('ok')})")
 
                 if updated:
                     save_rules(rules)
@@ -975,18 +1023,72 @@ def restore_rules():
     # 恢复保存的 SNAT 规则
     logging.info(f"恢复 {len(rules)} 条规则")
     for local_port, rule in rules.items():
+        if rule.get('suspended'): continue
         add_snat_rule(int(local_port), rule['target_ip'], rule['target_port'], target_host=rule.get('target_host'))
 
+_WEAK_TOKENS={DEFAULT_AGENT_TOKEN,'change-me','changeme','password','passw0rd','token','secret','admin','test','123456','12345678','default'}
 def _enforce_token_policy():
-    if TOKEN == DEFAULT_AGENT_TOKEN and not ALLOW_DEFAULT_TOKEN:
-        raise SystemExit(
-            "[!] Refusing to start: AGENT_TOKEN is still the default value.\n"
-            "    Set AGENT_TOKEN to a strong random value, or set "
-            "SNAT_ALLOW_DEFAULT_TOKEN=1 to override (NOT recommended)."
-        )
-    if len(TOKEN) < 16:
-        logging.warning("AGENT_TOKEN is shorter than 16 characters; consider using a stronger value.")
+    if (TOKEN in _WEAK_TOKENS or len(TOKEN)<16) and not ALLOW_DEFAULT_TOKEN:
+        raise SystemExit('[!] Refusing to start: AGENT_TOKEN is weak or shorter than 16 characters.')
+    if len(TOKEN)<32: logging.warning('AGENT_TOKEN is shorter than 32 characters.')
 
+TRAFFIC_LIMIT_CHECK_INTERVAL = int(os.getenv('AGENT_TRAFFIC_LIMIT_CHECK_INTERVAL', '60'))
+
+
+def _compute_total_bytes_locked(local_port, rules):
+    """按计数器增量累计流量，处理 iptables 计数器重置，避免后台循环重复累加。"""
+    entry = rules.get(str(local_port))
+    if not entry:
+        return 0
+    current = get_forward_counter(int(local_port), entry)
+    historical = int(entry.get('traffic_bytes', 0) or 0)
+    last = int(entry.get('last_counter', 0) or 0)
+    if current < last:
+        historical += current
+    else:
+        historical += current - last
+    entry['traffic_bytes'] = historical
+    entry['last_counter'] = current
+    return historical
+
+
+def traffic_limit_loop():
+    while TRAFFIC_LIMIT_CHECK_INTERVAL > 0:
+        time.sleep(TRAFFIC_LIMIT_CHECK_INTERVAL)
+        try:
+            with STATE_LOCK:
+                rules = load_rules()
+                dirty = False
+                for port, entry in rules.items():
+                    limit = int(entry.get('traffic_limit_gb', 0) or 0)
+                    if entry.get('suspended') or limit <= 0:
+                        continue
+                    total = _compute_total_bytes_locked(port, rules)
+                    dirty = True
+                    if total >= limit * (1024 ** 3):
+                        keep = _other_rules_share_target(
+                            rules, port, entry['target_ip'], entry['target_port'])
+                        ok, failures = delete_snat_rule(
+                            int(port), entry['target_ip'], entry['target_port'], keep)
+                        if ok:
+                            entry.pop('suspend_pending', None)
+                            entry.pop('suspend_failures', None)
+                            entry.update(
+                                suspended=True,
+                                suspended_reason='traffic_limit',
+                                suspended_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                suspend_verified=True,
+                            )
+                        else:
+                            entry.update(
+                                suspend_pending=True,
+                                suspend_verified=False,
+                                suspend_failures=failures,
+                            )
+                if dirty:
+                    save_rules(rules)
+        except Exception as exc:
+            logging.error(f'限额检查线程异常: {exc}')
 
 _BOOTSTRAPPED = False
 
@@ -1004,6 +1106,7 @@ def bootstrap():
     clean_old_logs()
     restore_rules()
     threading.Thread(target=refresh_dns_rules, daemon=True).start()
+    threading.Thread(target=traffic_limit_loop, daemon=True).start()
 
 
 if __name__ == '__main__':
