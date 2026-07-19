@@ -207,9 +207,11 @@ for _h in app.logger.handlers:
     _h.addFilter(RequestIDFilter())
     _h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [req:%(request_id)s] %(message)s'))
 
-# 请求频率限制
+# 请求频率限制：页面会并行轮询服务器/规则/流量/连接等多个接口；
+# 旧值 60 次/分钟会误伤手机端登录后的初始化与自动刷新，表现为“网络错误”(HTTP 429)。
+# 登录失败本身另有 check_login_attempts() 锁定机制，因此提高普通请求上限不放宽密码爆破保护。
 rate_limit_store = defaultdict(list)
-RATE_LIMIT_REQUESTS = 60  # 每分钟最多60次请求
+RATE_LIMIT_REQUESTS = 300  # 每分钟最多300次请求（登录失败仍由独立锁定机制保护）
 RATE_LIMIT_WINDOW = 60  # 时间窗口60秒
 
 # token 校验失败时的安全策略
