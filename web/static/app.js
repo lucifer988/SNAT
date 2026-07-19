@@ -552,6 +552,7 @@ function editRule(id) {
     if (!rule) return;
     
     document.getElementById('editRuleId').value = rule.id;
+    document.getElementById('editRuleNewId').value = rule.id;
     document.getElementById('editRuleLocalPort').value = rule.local_port;
     document.getElementById('editRuleTargetIp').value = rule.target_host || rule.target_ip;
     document.getElementById('editRuleTargetPort').value = rule.target_port;
@@ -572,15 +573,10 @@ async function saveEditRule() {
         remark: document.getElementById('editRuleRemark').value || '',
         traffic_limit_gb: parseInt(document.getElementById('editRuleTrafficLimit').value) || 0
     };
+    const newId = parseInt(document.getElementById('editRuleNewId').value);
+    if (newId && newId !== parseInt(id)) data.new_id = newId;
     
-    const resp = await fetch(`/api/rules/${id}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-        },
-        body: JSON.stringify(data)
-    });
+    const resp = await putWithCsrf(`/api/rules/${id}`, data);
     
     if (resp.ok) {
         closeModal('editRuleModal');
@@ -590,6 +586,19 @@ async function saveEditRule() {
     } else {
         const err = await resp.json();
         showError('更新失败', '#f5576c', 5000, err.error || '未知错误');
+    }
+}
+
+// 整理规则编号为连续的 ①②③…（只改面板编号，不动 Agent/iptables）
+async function renumberRules() {
+    if (!confirm('确定整理规则编号吗？\n当前规则会按编号从小到大重排为 ①②③…，转发不会中断。')) return;
+    const resp = await postWithCsrf('/api/rules/renumber', {});
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && data.success) {
+        await loadRules();
+        showSuccess(data.changed ? `已整理 ${data.changed} 条规则编号` : '编号已经连续，无需整理');
+    } else {
+        showError('整理失败', '#f5576c', 5000, data.error || '未知错误');
     }
 }
 
@@ -1125,6 +1134,7 @@ const ACTION_HANDLERS = {
     changePassword: () => changePassword(),
     addServer: () => addServer(),
     addRule: () => addRule(),
+    renumberRules: () => renumberRules(),
     // 带字符串参数
     bulkAction: (el) => bulkAction(el.dataset.arg),
     importJson: (el) => importJson(el.dataset.arg),

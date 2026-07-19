@@ -199,16 +199,33 @@ def update_or_delete_rule(rule_id):
             payload=resp.json() or {}
             data['target_ip']=payload.get('resolved_ip',data['target_ip']); data['target_host']=payload.get('target_host',data.get('target_host',''))
 
+        # 编号改绑(可选): new_id 与本次字段修改同一事务提交, 冲突/越界直接拒绝
+        new_rule_id = rule_id
+        if data.get('new_id') not in (None, ''):
+            try:
+                new_rule_id = int(data['new_id'])
+            except (TypeError, ValueError):
+                conn.close(); return jsonify({'success': False, 'error': '新编号必须为整数'}), 400
+            if not (1 <= new_rule_id <= 999999):
+                conn.close(); return jsonify({'success': False, 'error': '新编号范围 1-999999'}), 400
+            if new_rule_id != rule_id:
+                c.execute('SELECT id FROM rules WHERE id = ?', (new_rule_id,))
+                if c.fetchone():
+                    conn.close(); return jsonify({'success': False, 'error': f'编号 {new_rule_id} 已被占用'}), 400
+                c.execute('UPDATE rules SET id = ? WHERE id = ?', (new_rule_id, rule_id))
+
         c.execute('''UPDATE rules SET local_port=?, target_host=?, target_ip=?, target_port=?, remark=?, traffic_limit_gb=?
                     WHERE id=?''',
                   (data['local_port'], data.get('target_host', ''), data['target_ip'], data['target_port'],
-                   data.get('remark', ''), data.get('traffic_limit_gb', 0), rule_id))
+                   data.get('remark', ''), data.get('traffic_limit_gb', 0), new_rule_id))
         conn.commit()
         conn.close()
-        _app.log_event('INFO', f"更新规则 {rule_id}: {data['local_port']} -> {data['target_ip']}:{data['target_port']}")
-        _app.audit_log('update_rule', f"{_app.circled_num(rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
+        _app.log_event('INFO', f"更新规则 {new_rule_id}: {data['local_port']} -> {data['target_ip']}:{data['target_port']}")
+        _app.audit_log('update_rule', f"{_app.circled_num(new_rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
+        if new_rule_id != rule_id:
+            _app.audit_log('renumber_rule', f"{_app.circled_num(new_rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f'编号 {rule_id} → {new_rule_id}')
         _app.sync_server_rules(rule['server_id'], log_prefix=f'[编辑] 服务器 {rule["server_id"]}')
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'id': new_rule_id})
 
     # DELETE
     c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name
@@ -309,6 +326,29 @@ def toggle_rule(rule_id):
     _app.audit_log('toggle_rule', f"{_app.circled_num(rule_id)}{rule['server_name']}:{rule['local_port']}", 'success', '启用' if new_enabled else '停用')
     _app.sync_server_rules(rule['server_id'], log_prefix=f'[切换] 服务器 {rule["server_id"]}')
     return jsonify({'success': True, 'enabled': new_enabled})
+
+
+@bp.route('/api/rules/renumber', methods=['POST'])
+@_app.login_required
+@_app.require_recent_auth()
+def renumber_rules():
+    """整理编号: 按当前 id 顺序把规则重排为 1..N, 并重置自增水位。
+    两段式(先挪负值临时区再落位)避免重排过程中主键碰撞。"""
+    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
+    c = conn.cursor()
+    ids = [r[0] for r in c.execute('SELECT id FROM rules ORDER BY id').fetchall()]
+    if ids == list(range(1, len(ids) + 1)):
+        conn.close()
+        return jsonify({'success': True, 'changed': 0})
+    for pos, rid in enumerate(ids, start=1):
+        c.execute('UPDATE rules SET id = ? WHERE id = ?', (-pos, rid))
+    for pos in range(1, len(ids) + 1):
+        c.execute('UPDATE rules SET id = ? WHERE id = ?', (pos, -pos))
+    c.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'rules'", (len(ids),))
+    conn.commit(); conn.close()
+    _app.audit_log('renumber_rules', 'rules', 'success', f'整理 {len(ids)} 条编号为 1..{len(ids)}')
+    _app.log_event('INFO', f'规则编号已整理为 1..{len(ids)}')
+    return jsonify({'success': True, 'changed': len(ids)})
 
 
 @bp.route('/api/rules/bulk', methods=['POST'])

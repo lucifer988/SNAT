@@ -1026,6 +1026,7 @@
                 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button>
                 <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button>
                 <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button>
+                <button class="btn-primary" data-act="renumberRules">整理编号</button>
             </div>
             <div style="display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
                 <input id="ruleSearch" type="search" data-input="setRuleFilter" placeholder="🔍 搜索规则（端口 / 目标 / 备注 / 服务器）" style="max-width:320px;display:inline-block;width:50%;">
@@ -1178,6 +1179,10 @@
                 <span class="close" data-act="closeModal" data-arg="editRuleModal">&times;</span>
             </div>
             <input type="hidden" id="editRuleId">
+            <div class="form-group">
+                <label>编号（列表/告警里显示的 ①②③，可改）</label>
+                <input type="number" id="editRuleNewId" min="1">
+            </div>
             <div class="form-group">
                 <label>本地端口</label>
                 <input type="number" id="editRuleLocalPort">
