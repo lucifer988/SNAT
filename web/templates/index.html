@@ -981,13 +981,16 @@
         .tree-rule-main,
         .tree-rule-info,
         .tree-rule-actions {
-            justify-content: center;
-            text-align: center;
+            justify-content: flex-start;
+            text-align: left;
         }
-        .tree-rule-target { flex: 0 1 auto; color: #e2e8f0; }
+        .tree-rule-target { flex: 1; color: #e2e8f0; text-align: left; }
         .tree-rule-info { color: #94a3b8; }
-        .tree-rule-actions { justify-content: center; }
-        .tree-rule button { color: #fff; }
+        .tree-rule-actions { justify-content: flex-start; }
+        .tree-rule-actions button { color: #fff; border: none; }
+        .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #f59e0b, #f97316); }
+        .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #3b82f6, #6366f1); }
+        .tree-rule-actions button:nth-child(3) { background: linear-gradient(135deg, #ef4444, #f43f5e); }
         .tree-rule:hover { box-shadow: 0 12px 26px rgba(0,0,0,.22); }
         .tree-rule-port { color: #38bdf8; }
 
