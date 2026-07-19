@@ -652,7 +652,8 @@ async function changePassword() {
     if (data.success) {
         alert('密码修改成功，请重新登录');
         const logoutResp = await postWithCsrf('/logout', {});
-        window.location.href = logoutResp.ok ? '/login' : '/login';
+        if (!logoutResp.ok && !logoutResp.redirected) showError('密码已修改，但自动登出失败，请手动重新登录');
+        window.location.href = '/login';
     } else {
         alert('修改失败: ' + data.error);
     }

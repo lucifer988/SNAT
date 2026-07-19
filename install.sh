@@ -135,6 +135,8 @@ TRUST_PROXY=${TRUST_PROXY_VALUE}
 SNAT_ADMIN_PASSWORD="${ADMIN_PASSWORD_ENV}"
 SNAT_SECRET_KEY=${SNAT_SECRET_KEY}
 SNAT_TOKEN_SECRET=${SNAT_TOKEN_SECRET}
+# 生产默认仅允许字面量 Agent IP；如确需域名可在安装后显式改为0并自行承担DNS重绑定风险。
+SNAT_AGENT_HOST_IP_ONLY=1
 BACKUP_DIR=/var/backups/snat-manager
 WEB_HOST=${WEB_HOST}
 WEB_PORT=5000
@@ -157,7 +159,7 @@ EnvironmentFile=/etc/snat-manager/web.env
 #Environment="SNAT_SESSION_LIFETIME_HOURS=12"
 # 敏感操作（导出含 token/恢复备份/改密钥/批量删除…）二次认证有效期（秒），默认 600：
 #Environment="SNAT_REAUTH_MAX_AGE=600"
-# 仅接受 Agent 的字面量 IP、拒绝域名（强烈建议公网+WireGuard 部署开启，防 DNS 重绑定）：
+# 仅接受 Agent 的字面量 IP、拒绝域名（安装默认已在 web.env 开启；确需域名时显式改为0）：
 #Environment="SNAT_AGENT_HOST_IP_ONLY=1"
 # 签名请求默认不再附带明文 Bearer；仅对接只认 Bearer 的老 Agent 时才设 1：
 #Environment="SNAT_AGENT_SEND_BEARER=1"
