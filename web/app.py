@@ -1296,7 +1296,7 @@ def _process_telegram_command(text, chat_id):
             '/summary - 每日汇总\n'
             '/alerts - 检查异常告警\n'
             '操作:\n'
-            '/addrule <服务器编号> <本地端口> <目标IP> <目标端口> - 新增规则\n'
+            '/addrule <服务器编号> <本地端口> <目标IP> <目标端口> [备注] - 新增规则\n'
             '/delrule <规则编号> - 删除规则\n'
             '/toggle <规则编号> - 启用/停用规则\n'
             '/addserver <名称> <地址> <端口> <token> - 新增服务器\n'
@@ -1327,13 +1327,18 @@ def _process_telegram_command(text, chat_id):
         lines = ['⚠️ 当前异常服务器:'] + [f"- {r['name']}: {r['status']}" for r in rows]
         return send_telegram_message('\n'.join(lines), chat_id=chat_id)
     if cmd == '/addrule':
-        if len(args) != 4 or not all(a.isdigit() for a in (args[0], args[1], args[3])):
-            return send_telegram_message('用法: /addrule <服务器编号> <本地端口> <目标IP> <目标端口>', chat_id=chat_id)
+        if len(args) < 4 or not all(a.isdigit() for a in (args[0], args[1], args[3])):
+            return send_telegram_message(
+                '用法: /addrule <服务器编号> <本地端口> <目标IP> <目标端口> [备注]\n'
+                '例: /addrule 1 22005 1.1.1.1 33550 Cloudflare 测试', chat_id=chat_id)
+        remark = ' '.join(args[4:]).strip() or 'via TG bot'
         code, data = _bot_api_call('/api/rules', 'POST', {
             'server_id': int(args[0]), 'local_port': int(args[1]),
-            'target_ip': args[2], 'target_port': int(args[3]), 'remark': 'via TG bot'})
+            'target_ip': args[2], 'target_port': int(args[3]), 'remark': remark})
         if data.get('success'):
-            return send_telegram_message(f"✅ 规则已创建: {circled_num(data.get('id'))} 端口 {args[1]} -> {args[2]}:{args[3]}", chat_id=chat_id)
+            return send_telegram_message(
+                f"✅ 规则已创建: {circled_num(data.get('id'))} 端口 {args[1]} -> {args[2]}:{args[3]}\n备注: {remark}",
+                chat_id=chat_id)
         return send_telegram_message(f"❌ 创建失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
     if cmd == '/delrule':
         if len(args) != 1 or not args[0].isdigit():
