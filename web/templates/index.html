@@ -415,6 +415,52 @@
         #rulesTable th:nth-child(8), #rulesTable td:nth-child(8) { width: 260px; min-width: 260px; }
         th, td { padding: 14px 16px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06); white-space: nowrap; }
         td.cell { overflow: hidden; text-overflow: ellipsis; }
+
+        /* 服务器列表：五列的表头和内容全部居中，完整显示文字，不使用省略号。
+           小屏宽度不足时由 .table-wrap 横向滚动，不压缩/截断字段。 */
+        #serversTable {
+            table-layout: auto;
+            min-width: 760px;
+        }
+        #serversTable th,
+        #serversTable td {
+            text-align: center;
+            vertical-align: middle;
+            white-space: normal;
+            overflow: visible;
+            text-overflow: clip;
+            overflow-wrap: anywhere;
+        }
+        #serversTable th:nth-child(1), #serversTable td:nth-child(1) { min-width: 150px; }
+        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 180px; }
+        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 90px; }
+        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 110px; }
+        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 230px; }
+        #serversTable .action-group {
+            justify-content: center;
+            flex-wrap: nowrap;
+        }
+        #serversTable .action-group button { white-space: nowrap; }
+        @media (max-width: 768px) {
+            /* 服务器列表在手机端也保留真实表格/表头；空间不足横向滚动，避免卡片布局把标题藏掉。 */
+            #serversTable thead { display: table-header-group; }
+            #serversTable tbody { display: table-row-group; }
+            #serversTable tbody tr {
+                display: table-row;
+                background: transparent;
+                margin: 0;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+            }
+            #serversTable tbody td {
+                display: table-cell;
+                padding: 12px 10px;
+                text-align: center;
+                border-bottom: 1px solid rgba(255,255,255,0.06);
+            }
+            #serversTable tbody td::before { display: none; }
+        }
         th {
             background: rgba(255,255,255,0.03);
             color: #94a3b8;
