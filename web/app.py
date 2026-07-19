@@ -841,8 +841,9 @@ def before_request():
     if request.path == '/healthz':
         return
 
-    # IP 白名单检查（登录页也纳入：白名单未命中直接挡在门外，不给爆破机会）
-    if request.path != '/login' or request.method == 'POST':
+    # IP 白名单检查（内部 TG test_client 通过不可由网络请求设置的 WSGI environ 标记放行）。
+    internal_bot_call = bool(request.environ.get('snat.internal_bot_call'))
+    if not internal_bot_call and (request.path != '/login' or request.method == 'POST'):
         if not check_ip_whitelist():
             # 返回 404 而不是 403，不暴露系统信息
             return render_template('login.html'), 404
@@ -1288,7 +1289,7 @@ def _bot_api_call(path, method='GET', payload=None):
                     s['session_id'] = sid
             resp = client.open(path, method=method, json=payload,
                                headers={'X-CSRF-Token': csrf},
-                               environ_overrides={'REMOTE_ADDR': 'telegram-bot'})
+                               environ_overrides={'REMOTE_ADDR': '127.0.0.1', 'snat.internal_bot_call': True})
             return resp.status_code, (resp.get_json(silent=True) or {})
     except Exception as e:
         app.logger.warning(f'bot api call failed: {e}')
@@ -1417,10 +1418,13 @@ def _telegram_polling_loop():
                 offset = max(offset, int(item.get('update_id', 0) or 0))
                 message = item.get('message') or {}
                 text = (message.get('text') or '').strip()
-                chat_id = str((message.get('chat') or {}).get('id', '')).strip()
+                chat = message.get('chat') or {}
+                chat_id = str(chat.get('id', '')).strip()
+                sender_id = str((message.get('from') or {}).get('id', '')).strip()
                 if not text.startswith('/'):
                     continue
-                if allowed_chat_id and chat_id != allowed_chat_id:
+                # 管理命令仅允许授权用户的一对一私聊；群组内即使 chat_id 命中也拒绝其他成员借权操作。
+                if chat.get('type') != 'private' or chat_id != allowed_chat_id or sender_id != allowed_chat_id:
                     continue
                 _process_telegram_command(text, chat_id)
         except Exception as e:

@@ -12,6 +12,8 @@ services:
       # 首次启动可从 .env 注入管理员密码；初始化后应从 .env 删除，避免长期保留。
       SNAT_ADMIN_PASSWORD: ${SNAT_ADMIN_PASSWORD:-}
       SNAT_TOKEN_SECRET: ${SNAT_TOKEN_SECRET:?请在 .env 设置 SNAT_TOKEN_SECRET (见 .env.example)}
+      # 生产默认只接受字面量 Agent IP，彻底避免 DNS rebinding/TOCTOU。
+      SNAT_AGENT_HOST_IP_ONLY: "${SNAT_AGENT_HOST_IP_ONLY:-1}"
       # 可选：集中托管 Flask session 密钥（不设则容器内自动生成并持久化到卷）
       SNAT_SECRET_KEY: ${SNAT_SECRET_KEY:-}
       # 生产公网面板应由反代终止 TLS，并开启 FORCE_HTTPS/TRUST_PROXY。

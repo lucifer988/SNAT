@@ -144,16 +144,17 @@ def alert_settings():
         if not _app._recent_auth_ok():
             return jsonify({'success': False, 'error': '修改告警 token 需要重新验证密码', 'reauth_required': True}), 403
         _app.set_secret_setting('tg_bot_token', new_token)
-    _app.set_setting('tg_chat_id', (data.get('tg_chat_id') or '').strip())
+    _app.set_setting('tg_chat_id', str(data.get('tg_chat_id') if 'tg_chat_id' in data else current_chat_id).strip())
     try:
-        _app.set_setting('alert_offline_seconds', str(int(data.get('offline_seconds', 300))))
+        offline_seconds = int(data.get('offline_seconds', _app.get_setting('alert_offline_seconds', '300') or '300'))
+        _app.set_setting('alert_offline_seconds', str(offline_seconds))
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'offline_seconds 必须为整数'}), 400
-    _app.set_setting('tg_command_enabled', '1' if data.get('command_enabled', False) else '0')
-    _app.set_setting('tg_enable_daily_summary', '1' if data.get('daily_summary_enabled', True) else '0')
-    _app.set_setting('tg_daily_summary_time', str((data.get('daily_summary_time') or '09:00')).strip()[:5] or '09:00')
-    _app.set_setting('tg_enable_audit', '1' if data.get('audit_enabled', True) else '0')
-    _app.set_setting('tg_enable_limit_alerts', '1' if data.get('limit_alerts_enabled', True) else '0')
+    _app.set_setting('tg_command_enabled', '1' if requested_command_enabled else '0')
+    _app.set_setting('tg_enable_daily_summary', '1' if data.get('daily_summary_enabled', _app._setting_bool('tg_enable_daily_summary', '1')) else '0')
+    _app.set_setting('tg_daily_summary_time', str(data.get('daily_summary_time', _app.get_setting('tg_daily_summary_time', '09:00')) or '09:00').strip()[:5] or '09:00')
+    _app.set_setting('tg_enable_audit', '1' if data.get('audit_enabled', _app._setting_bool('tg_enable_audit', '1')) else '0')
+    _app.set_setting('tg_enable_limit_alerts', '1' if data.get('limit_alerts_enabled', _app._setting_bool('tg_enable_limit_alerts', '1')) else '0')
     _app.audit_log('update_alert_settings', 'alerts')
     return jsonify({'success': True})
 

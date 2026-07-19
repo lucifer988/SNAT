@@ -69,4 +69,20 @@ class SecurityRound11(unittest.TestCase):
         r=self.client.post('/api/rules/bulk',json={'action':'disable','rule_ids':list(range(1,202))},headers={'X-CSRF-Token':'csrf'})
         self.assertEqual(r.status_code,400); self.assertIn('200',r.get_json()['error'])
 
+    def test_bot_internal_call_survives_ip_whitelist(self):
+        with patch.object(webapp,'get_ip_whitelist',return_value=['10.0.0.1']):
+            code,_=webapp._bot_api_call('/api/servers')
+        self.assertEqual(code,200)
+
+    def test_alert_partial_update_preserves_command_enabled(self):
+        con=sqlite3.connect(webapp.DB_FILE)
+        con.execute("INSERT OR REPLACE INTO settings_kv(key,value) VALUES('tg_command_enabled','1')")
+        con.commit(); con.close()
+        with self.client.session_transaction() as s: s['last_reauth']=__import__('time').time()
+        r=self.client.post('/api/settings/alerts',json={'offline_seconds':600},headers={'X-CSRF-Token':'csrf'})
+        self.assertEqual(r.status_code,200)
+        con=sqlite3.connect(webapp.DB_FILE)
+        value=con.execute("SELECT value FROM settings_kv WHERE key='tg_command_enabled'").fetchone()[0]
+        con.close(); self.assertEqual(value,'1')
+
 if __name__=='__main__': unittest.main()
