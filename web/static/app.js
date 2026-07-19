@@ -730,15 +730,6 @@ function checkTrafficAlerts() {
                 alerts.push(`规则 ${rule.server_name}:${rule.local_port} 流量已达 ${percentage.toFixed(1)}%`);
             }
         }
-        
-        // 检查流量为0的启用规则
-        if (rule.enabled && rule.traffic_used_bytes === 0) {
-            const createdTime = new Date(rule.created_at).getTime();
-            const now = Date.now();
-            if (now - createdTime > 5 * 60 * 1000) { // 创建超过5分钟
-                alerts.push(`规则 ${rule.server_name}:${rule.local_port} 无流量统计，可能异常`);
-            }
-        }
     }
     
     if (alerts.length > 0) {
