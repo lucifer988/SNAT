@@ -1065,8 +1065,41 @@
         .table-wrap, #rulesTree, #rulesList, #auditContent, #logsContent, #diagResults { -webkit-overflow-scrolling: touch; }
         a { color: #38bdf8; }
 
+        /* Telegram 选项固定为同一列：复选框占固定首列，文字占第二列。 */
+        .tg-options {
+            display: grid;
+            grid-template-columns: minmax(220px, max-content);
+            justify-content: center;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .tg-options label {
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr);
+            align-items: center;
+            column-gap: 8px;
+            margin: 0;
+            color: #cbd5e1;
+        }
+        .tg-options input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            justify-self: start;
+        }
+        .tg-options .tg-time-row { grid-template-columns: 92px 120px; }
+        .tg-options input[type="time"] { width: 120px; min-width: 120px; }
+
         /* 最终移动端覆盖：必须放在所有桌面默认规则之后，避免后置 #rulesList/.mobile-bottom-bar display:none 吞掉触控按钮。 */
         @media (max-width: 768px) {
+            .tg-options {
+                width: min(100%, 280px);
+                grid-template-columns: minmax(0, 1fr);
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .tg-options label { width: 100%; }
+            .tg-options .tg-time-row { grid-template-columns: 92px 120px; }
             #rulesTable { display: none; }
             #rulesList { display: block; }
             .mobile-bottom-bar { display: flex; }
@@ -1172,12 +1205,12 @@
             <div id="alertResult" style="margin:10px 0;color:#555"></div>
             <div id="snapshotList" style="margin:10px 0;color:#555"></div>
             <div style="font-size:12px;color:#666;margin:6px 0">测试告警=用 TG Bot 发一条测试消息；检查告警=立即检查离线/异常服务器并尝试通过 TG 发送；查看备份=查看当前备份列表并可恢复。</div><div id="backupList" style="margin:10px 0;color:#555"></div>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;align-items:center;justify-content:center;">
-                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgCommandEnabled" style="width:auto;"> 启用 Telegram 命令</label>
-                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgDailySummaryEnabled" style="width:auto;"> 启用每日汇总</label>
-                <label style="display:flex;align-items:center;gap:6px;">汇总时间 <input type="time" id="tgDailySummaryTime" value="09:00" style="width:auto;min-width:110px;"></label>
-                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgAuditEnabled" style="width:auto;"> 推送审计消息</label>
-                <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tgLimitAlertsEnabled" style="width:auto;"> 推送超限告警</label>
+            <div class="tg-options">
+                <label><input type="checkbox" id="tgCommandEnabled"> <span>启用 Telegram 命令</span></label>
+                <label><input type="checkbox" id="tgDailySummaryEnabled"> <span>启用每日汇总</span></label>
+                <label class="tg-time-row"><span>汇总时间</span><input type="time" id="tgDailySummaryTime" value="09:00"></label>
+                <label><input type="checkbox" id="tgAuditEnabled"> <span>推送审计消息</span></label>
+                <label><input type="checkbox" id="tgLimitAlertsEnabled"> <span>推送超限告警</span></label>
             </div>
         </div>
 
