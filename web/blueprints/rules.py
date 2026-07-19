@@ -364,6 +364,15 @@ def bulk_rules():
     rule_ids = data.get('rule_ids', [])
     if not isinstance(rule_ids, list) or not rule_ids:
         return jsonify({'success': False, 'error': 'rule_ids 不能为空'}), 400
+    if len(rule_ids) > 200:
+        return jsonify({'success': False, 'error': '单次批量操作最多 200 条规则'}), 400
+    try:
+        rule_ids = [int(x) for x in rule_ids]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '规则编号必须为整数'}), 400
+    if any(x < 1 for x in rule_ids):
+        return jsonify({'success': False, 'error': '规则编号无效'}), 400
+    rule_ids = list(dict.fromkeys(rule_ids))
 
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row

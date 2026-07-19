@@ -54,7 +54,8 @@ def login():
     return jsonify({'success': False, 'error': '登录失败'}), 401
 
 
-@bp.route('/logout')
+@bp.route('/logout', methods=['POST'])
+@_app.login_required
 def logout():
     user = session.get('username', '-')
     _app.revoke_server_session(session.get('session_id'))

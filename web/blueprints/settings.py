@@ -130,6 +130,13 @@ def alert_settings():
             'limit_alerts_enabled': _app._setting_bool('tg_enable_limit_alerts', '1')
         })
     data = request.json or {}
+    current_chat_id = _app.get_setting('tg_chat_id', '').strip()
+    current_command_enabled = _app._setting_bool('tg_command_enabled', '0')
+    requested_command_enabled = bool(data.get('command_enabled', current_command_enabled))
+    chat_changed = 'tg_chat_id' in data and (data.get('tg_chat_id') or '').strip() != current_chat_id
+    command_changed = 'command_enabled' in data and requested_command_enabled != current_command_enabled
+    if (chat_changed or command_changed) and not _app._recent_auth_ok():
+        return jsonify({'success': False, 'error': '修改 Chat ID/启用 Telegram 命令需要重新验证密码', 'reauth_required': True}), 403
     # 仅当传入了非空 token 时才更新，留空表示「保持原值不变」，便于前端不回显也能改其它项。
     new_token = (data.get('tg_bot_token') or '').strip()
     if new_token:

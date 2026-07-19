@@ -120,7 +120,7 @@ def delete_server(server_id):
     return jsonify({'success':True,'orphaned':failed})
 
 
-@bp.route('/api/servers/<int:server_id>/check', methods=['GET'])
+@bp.route('/api/servers/<int:server_id>/check', methods=['POST'])
 @_app.login_required
 @_app.require_recent_auth()
 def check_server(server_id):

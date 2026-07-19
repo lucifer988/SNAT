@@ -460,17 +460,20 @@ def count_matching_rules(table, chain, fragments):
     lines = [line for line in stdout.splitlines() if all(fragment in line for fragment in fragments)]
     return len(lines)
 
+AGENT_IPV4_ONLY = os.getenv('AGENT_IPV4_ONLY', '1').lower() in ('1', 'true', 'yes')
+
 def resolve_target(target):
-    """解析 IPv4 目标；当前 iptables 数据面不支持 IPv6。"""
+    """解析目标；Compose/默认配置仅允许 IPv4，当前 iptables 数据面不支持 IPv6。"""
     try:
         addr = ipaddress.ip_address(target)
-        if addr.version != 4:
+        if AGENT_IPV4_ONLY and addr.version != 4:
             logging.warning(f"拒绝 IPv6 目标（当前版本仅支持 IPv4）: {target}")
             return None, None
         return target, target
     except ValueError:
         pass
     try:
+        # IPv4-only 模式明确用 gethostbyname，避免 AAAA 结果进入 IPv4 iptables。
         return target, socket.gethostbyname(target)
     except Exception as e:
         logging.error(f"目标解析失败: {target} ({e})")

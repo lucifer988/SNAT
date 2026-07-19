@@ -85,19 +85,27 @@ class AgentHostBlocked(Exception):
 
 
 def _enforce_agent_host_runtime(url):
-    """请求前的硬校验：仅 IP 模式下，非字面量 IP 的 Agent 主机一律拒绝发起请求。
-
-    修复“SNAT_AGENT_HOST_IP_ONLY 只挡新增/编辑、挡不住库里历史域名主机”的迁移尾巴：
-    只要开了仅 IP 模式，无论主机来自新表单还是老数据库，运行期都不再向域名主机发请求，
-    彻底切断 DNS 重绑定/TOCTOU 通道。
-    """
-    if not AGENT_HOST_IP_ONLY:
-        return
-    host = urlsplit(url).hostname or ''
+    """每次请求前校验完整 Agent URL；历史数据库中的恶意 host 也无法绕过。"""
+    parsed = urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or parsed.username or parsed.password:
+        raise AgentHostBlocked('Agent URL scheme/userinfo 不允许')
+    if parsed.query or parsed.fragment:
+        raise AgentHostBlocked('Agent URL query/fragment 不允许')
+    host = parsed.hostname or ''
     try:
-        ipaddress.ip_address(host)
+        port = parsed.port
     except ValueError:
-        raise AgentHostBlocked(f'仅 IP 模式下拒绝访问域名 Agent 主机: {host or url}')
+        raise AgentHostBlocked('Agent URL 端口无效')
+    if not host or port is None or not (1 <= port <= 65535):
+        raise AgentHostBlocked('Agent URL 主机或端口无效')
+    ok, reason = validate_agent_host(host)
+    if not ok:
+        raise AgentHostBlocked(reason)
+    if AGENT_HOST_IP_ONLY:
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            raise AgentHostBlocked(f'仅 IP 模式下拒绝访问域名 Agent 主机: {host}')
 
 
 def agent_post(url, token, payload, timeout=5):
@@ -176,7 +184,7 @@ if TRUST_PROXY:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 BACKUP_DIR = os.getenv('BACKUP_DIR', '/var/backups/snat-manager')
 TOKEN_SECRET = os.getenv('SNAT_TOKEN_SECRET', '')
-WEB_HOST = os.getenv('WEB_HOST', '0.0.0.0')
+WEB_HOST = os.getenv('WEB_HOST', '127.0.0.1')
 WEB_PORT = int(os.getenv('WEB_PORT', '5000'))
 SIGNED_REQUEST_TTL = int(os.getenv('SIGNED_REQUEST_TTL', '300'))
 app.config['SESSION_COOKIE_SECURE'] = FORCE_HTTPS
@@ -209,9 +217,10 @@ for _h in app.logger.handlers:
 
 # 请求频率限制：页面会并行轮询服务器/规则/流量/连接等多个接口；
 # 旧值 60 次/分钟会误伤手机端登录后的初始化与自动刷新，表现为“网络错误”(HTTP 429)。
-# 登录失败本身另有 check_login_attempts() 锁定机制，因此提高普通请求上限不放宽密码爆破保护。
+# 登录失败本身另有 check_login_attempts() 锁定机制。
 rate_limit_store = defaultdict(list)
-RATE_LIMIT_REQUESTS = 300  # 每分钟最多300次请求（登录失败仍由独立锁定机制保护）
+rate_limit_lock = threading.RLock()
+RATE_LIMIT_REQUESTS = 300  # 每分钟最多300次请求
 RATE_LIMIT_WINDOW = 60  # 时间窗口60秒
 
 # token 校验失败时的安全策略
@@ -272,20 +281,15 @@ def check_rate_limit():
     client_ip = request.remote_addr
     now = time.time()
     
-    # 清理过期记录
-    rate_limit_store[client_ip] = [t for t in rate_limit_store[client_ip] if now - t < RATE_LIMIT_WINDOW]
-    
-    # 控制缓存大小，避免内存增长
-    if len(rate_limit_store) > 10000:
-        for ip in list(rate_limit_store.keys())[:2000]:
-            rate_limit_store.pop(ip, None)
-    
-    # 检查频率
-    if len(rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
-        return False
-    
-    rate_limit_store[client_ip].append(now)
-    return True
+    with rate_limit_lock:
+        rate_limit_store[client_ip] = [t for t in rate_limit_store[client_ip] if now - t < RATE_LIMIT_WINDOW]
+        if len(rate_limit_store) > 10000:
+            for ip in list(rate_limit_store.keys())[:2000]:
+                rate_limit_store.pop(ip, None)
+        if len(rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+            return False
+        rate_limit_store[client_ip].append(now)
+        return True
 
 def generate_csrf_token():
     """生成 CSRF Token"""
@@ -726,13 +730,16 @@ def validate_agent_host(host):
     if not host or len(host) > 253:
         return False, '服务器地址格式无效'
     # 基本字符白名单：IP / 主机名允许的字符，挡掉注入类输入
-    if any(ch.isspace() for ch in host) or '/' in host or '\\' in host or '@' in host:
+    if any(ch.isspace() for ch in host) or '/' in host or '\\' in host or '@' in host or any(ch in host for ch in '#?%'):
         return False, '服务器地址格式无效'
     if _AGENT_HOST_ALLOW_ALL:
         return True, ''
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        # URL/解析器可能接受纯十进制、十六进制或带前导零的另类 IPv4；禁止把数字串当域名放行。
+        if all(ch in '0123456789.' for ch in host) or host.lower().startswith('0x'):
+            return False, '服务器地址格式无效'
         # 主机名而非字面 IP
         if AGENT_HOST_IP_ONLY:
             return False, '仅允许填写 Agent 的 IP 地址（当前为仅 IP 模式，不接受域名）'
@@ -828,6 +835,10 @@ def before_request():
         return jsonify({'error': 'HTTPS required'}), 403
     # 静态文件放行（登录页的 GET 也走静态样式）
     if request.path.startswith('/static/'):
+        return
+
+    # healthz 是容器/systemd 本机探针：不受管理面 IP 白名单及用户请求限流影响。
+    if request.path == '/healthz':
         return
 
     # IP 白名单检查（登录页也纳入：白名单未命中直接挡在门外，不给爆破机会）
@@ -941,10 +952,7 @@ def login_required(f):
     """登录验证装饰器"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # 检查请求频率
-        if not check_rate_limit():
-            return jsonify({'error': '请求过于频繁'}), 429
-        
+        # 全局 before_request 已完成一次请求限流；此处不重复计数。
         # 检查登录状态
         if not session.get('logged_in') or not _session_is_valid():
             session.clear()
@@ -1255,14 +1263,16 @@ def _build_daily_summary():
 
 
 def _bot_api_call(path, method='GET', payload=None):
-    """把 TG 命令转成面板内部 API 调用：经 test_client 走真实 WSGI 派发，
-    完整复用登录态/CSRF/二次认证/参数校验/失败回滚/规则同步/审计逻辑，不另造一套写路径。
-
-    会话以 admin 身份建立（审计用户显示 admin），REMOTE_ADDR 标记为 telegram-bot 以区分来源渠道。
-    注意：若日后在面板配置了 IP 白名单，'telegram-bot' 非字面量 IP 会被拦截，届时 bot 写操作不可用。
-    """
+    """TG 命令经面板内部 API，复用 CSRF/校验/回滚/审计；临时会话用后即吊销。"""
     csrf = secrets.token_hex(16)
+    sid = None
     try:
+        # 默认密码尚未修改时禁止远程管理通道。
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        row = conn.execute("SELECT must_change_password FROM users WHERE username='admin'").fetchone()
+        conn.close()
+        if not row or bool(row[0]):
+            return 403, {'success': False, 'error': '管理员默认密码尚未修改，Telegram 管理命令已禁用'}
         with app.test_request_context('/'):
             session['username'] = 'admin'
             create_server_session('admin')
@@ -1283,6 +1293,9 @@ def _bot_api_call(path, method='GET', payload=None):
     except Exception as e:
         app.logger.warning(f'bot api call failed: {e}')
         return 500, {'success': False, 'error': f'内部调用异常: {e}'}
+    finally:
+        if sid:
+            revoke_server_session(sid)
 
 
 def _process_telegram_command(text, chat_id):
@@ -1997,13 +2010,20 @@ def sync_server_rules(server_id, log_prefix=''):
 
 
 def _enforce_runtime_policy():
-    """启动期安全策略校验：生产环境必须配置 TOKEN_SECRET（用于 Agent token 落库加密）。"""
-    if APP_ENV == 'production' and not TOKEN_SECRET:
-        raise SystemExit(
-            "[!] Refusing to start in production without SNAT_TOKEN_SECRET set.\n"
-            "    Generate a strong value (e.g. `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`) "
-            "and export SNAT_TOKEN_SECRET before running."
-        )
+    """生产启动拒绝缺失/示例/短密钥，避免“能启动但默认不安全”。"""
+    if APP_ENV != 'production':
+        return
+    weak = {'change-me', 'changeme', 'password', 'secret', 'token', 'default', 'example', 'test'}
+    token_secret = (TOKEN_SECRET or '').strip()
+    if not token_secret or len(token_secret) < 32 or token_secret.lower() in weak:
+        raise SystemExit('[!] Refusing to start: SNAT_TOKEN_SECRET must be a strong value of at least 32 characters.')
+    # 仅显式注入的 SNAT_SECRET_KEY 才做生产策略检查；未注入时 _load_secret_key 会生成并以0600持久化强随机值。
+    explicit_session_secret = os.getenv('SNAT_SECRET_KEY', '').strip()
+    if explicit_session_secret and (len(explicit_session_secret) < 32 or explicit_session_secret.lower() in weak):
+        raise SystemExit('[!] Refusing to start: SNAT_SECRET_KEY must be at least 32 characters and non-placeholder.')
+    setup_password = os.getenv('SNAT_ADMIN_PASSWORD', '').strip()
+    if setup_password and (setup_password.lower() in weak or validate_password_strength(setup_password)):
+        raise SystemExit('[!] Refusing to start: SNAT_ADMIN_PASSWORD is an example or weak password.')
 
 
 _BOOTSTRAPPED = False

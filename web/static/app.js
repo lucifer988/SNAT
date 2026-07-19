@@ -207,7 +207,7 @@ function renderServers() {
 
 // 检查服务器状态
 async function checkServer(id) {
-    const resp = await fetch(`/api/servers/${id}/check`);
+    const resp = await postWithCsrf(`/api/servers/${id}/check`, {});
     const data = await resp.json();
     if (data.success) {
         loadServers();
@@ -614,11 +614,12 @@ async function toggleRule(id) {
     }
 }
 
-// 登出
-function logout() {
-    if (confirm('确定要登出吗？')) {
-        window.location.href = '/logout';
-    }
+// 登出（POST + CSRF，避免跨站 GET 强制登出）
+async function logout() {
+    if (!confirm('确定要登出吗？')) return;
+    const resp = await postWithCsrf('/logout', {});
+    if (resp.ok || resp.redirected) window.location.href = '/login';
+    else showError('登出失败');
 }
 
 // 显示修改密码模态框
