@@ -957,7 +957,7 @@ def login_required(f):
             if not csrf_token and request.is_json and request.json:
                 csrf_token = request.json.get('csrf_token')
             if not csrf_token or not verify_csrf_token(csrf_token):
-                return jsonify({'error': 'CSRF 验证失败'}), 403
+                return jsonify({'error': 'CSRF 验证失败', 'csrf_required': True}), 403
         
         return f(*args, **kwargs)
     return decorated_function

@@ -122,16 +122,23 @@ async function promptReauth() {
     return false;
 }
 
-// 带 reauth 自动重试的 fetch 包装：请求返回 reauth_required 时，弹密码框，通过后重试一次。
+// 带 reauth/CSRF 自动重试的 fetch 包装：
+// 403+reauth_required → 弹密码框，通过后重试；403+csrf_required（多开标签/页面过夜导致 token 过期）→ 自动刷新 token 重试。
 async function fetchWithReauth(url, options) {
     let resp = await fetch(url, options);
-    if (resp.status === 403) {
+    for (let attempt = 0; attempt < 2 && resp.status === 403; attempt++) {
         let body = null;
         try { body = await resp.clone().json(); } catch (e) {}
-        if (body && body.reauth_required) {
+        if (body && body.csrf_required) {
+            await getCsrfToken();
+            options.headers['X-CSRF-Token'] = csrfToken;
+        } else if (body && body.reauth_required) {
             const ok = await promptReauth();
-            if (ok) resp = await fetch(url, options);
+            if (!ok) break;
+        } else {
+            break;
         }
+        resp = await fetch(url, options);
     }
     return resp;
 }
