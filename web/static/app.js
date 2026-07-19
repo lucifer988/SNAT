@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initTopForceHttpsToggle();
     loadServers();
     loadRules().then(() => { loadTrafficSummary(); loadConnectionsSummary(); });
+    loadAlertSettings();
     
     // 移动端检测并切换视图
     checkMobileView();
@@ -82,14 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // 移动端视图切换
 function checkMobileView() {
-    const isMobile = window.innerWidth <= 768;
-    // 服务器表格移动端处理
-    const serversTable = document.getElementById('serversTable');
-    if (serversTable) {
-        // 移动端用 CSS 处理，但同步切换 thead
-        const thead = serversTable.querySelector('thead');
-        if (thead) thead.style.display = isMobile ? 'none' : '';
-    }
+    // 响应式展示完全交给后置 CSS；不要写内联 display，否则会压过移动端保留表头的规则。
 }
 
 // 检查所有规则流量
@@ -665,6 +659,7 @@ async function showSettingsModal() {
     const data = await resp.json();
     document.getElementById('ipWhitelist').value = data.ip_whitelist.join('\n');
     document.getElementById('forceHttps').checked = !!data.force_https;
+    await loadAlertSettings();
     document.getElementById('settingsModal').style.display = 'block';
 }
 
@@ -799,6 +794,7 @@ async function bulkCheckServers() {
         showSuccess(`批量检查完成：成功 ${ok} 台，失败 ${fail} 台`);
         const el = document.getElementById('bulkResult');
         if (el) el.innerHTML = data.results.map(x => `<div>${esc(x.name)}: ${x.ok ? '✅ OK' : '❌ ' + esc(x.error || ('HTTP ' + (x.status_code ?? 'ERR')))}</div>`).join('');
+        await loadServers();
     }
 }
 

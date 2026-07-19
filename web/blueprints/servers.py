@@ -128,7 +128,11 @@ def check_server(server_id):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('SELECT * FROM servers WHERE id = ?', (server_id,))
-    server = dict(c.fetchone())
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'success': False, 'error': '服务器不存在'}), 404
+    server = dict(row)
 
     try:
         resp = _app.agent_get(
@@ -137,17 +141,18 @@ def check_server(server_id):
             timeout=3
         )
         if resp.status_code == 200:
-            c.execute('UPDATE servers SET status = ? WHERE id = ?', ('online', server_id))
-            conn.commit()
             status = 'online'
         elif resp.status_code == 401:
             status = 'token_invalid'
-            _app.mark_token_invalid(server_id, 'health 401')
         else:
             status = 'offline'
+        c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?', (status, server_id))
+        conn.commit()
+        if status == 'token_invalid':
+            _app.mark_token_invalid(server_id, 'health 401')
         _app.log_event('INFO', f"服务器检查 {server_id}: {status}")
     except Exception as e:
-        c.execute('UPDATE servers SET status = ? WHERE id = ?', ('offline', server_id))
+        c.execute('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?', ('offline', server_id))
         conn.commit()
         status = 'offline'
         _app.log_event('WARNING', f"服务器检查失败 {server_id}: {e}")
@@ -167,14 +172,19 @@ def bulk_check_servers():
     server_list = [dict(row) for row in c.fetchall()]
     conn.close()
     results = []
+    updates = []
     for server in server_list:
         try:
             resp = _app.agent_get(
                 f"http://{server['host']}:{server['port']}/health",
-                _app.decrypt_token(server['token']),
-                timeout=3
-            )
-            results.append({'id': server['id'], 'name': server['name'], 'status_code': resp.status_code, 'ok': resp.status_code == 200})
+                _app.decrypt_token(server['token']), timeout=3)
+            status = 'online' if resp.status_code == 200 else ('token_invalid' if resp.status_code == 401 else 'offline')
+            results.append({'id': server['id'], 'name': server['name'], 'status_code': resp.status_code, 'ok': status == 'online', 'status': status})
         except Exception as e:
-            results.append({'id': server['id'], 'name': server['name'], 'ok': False, 'error': str(e)})
+            status = 'offline'
+            results.append({'id': server['id'], 'name': server['name'], 'ok': False, 'status': status, 'error': str(e)})
+        updates.append((status, server['id']))
+    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
+    conn.executemany('UPDATE servers SET status = ?, last_check = CURRENT_TIMESTAMP WHERE id = ?', updates)
+    conn.commit(); conn.close()
     return jsonify({'success': True, 'results': results})

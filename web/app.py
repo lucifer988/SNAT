@@ -898,6 +898,7 @@ def after_request(response):
 # 同时给存储加上限（LRU 淘汰最旧记录），防止攻击者用海量随机用户名/IP 撑爆内存。
 login_attempts = {}
 login_attempts_by_ip = {}
+login_attempts_lock = threading.RLock()
 MAX_ATTEMPTS = 5
 MAX_IP_ATTEMPTS = 20
 LOCKOUT_TIME = 300  # 5分钟
@@ -917,37 +918,36 @@ def _cleanup_expired_attempts():
                 store.pop(k, None)
 
 def check_login_attempts(username):
-    """检查登录尝试次数（IP:username 与 纯 IP 两个维度任一触顶即拒绝）"""
-    _cleanup_expired_attempts()
-    now = datetime.now().timestamp()
-    client_ip = request.remote_addr
-    key = f"{client_ip}:{username}"
-    if key in login_attempts:
-        attempts, last_time = login_attempts[key]
-        if now - last_time < LOCKOUT_TIME and attempts >= MAX_ATTEMPTS:
-            return False
-    if client_ip in login_attempts_by_ip:
-        attempts, last_time = login_attempts_by_ip[client_ip]
-        if now - last_time < LOCKOUT_TIME and attempts >= MAX_IP_ATTEMPTS:
-            return False
-    return True
+    """线程安全检查登录尝试次数。"""
+    with login_attempts_lock:
+        _cleanup_expired_attempts()
+        now = datetime.now().timestamp()
+        client_ip = request.remote_addr
+        key = f"{client_ip}:{username}"
+        if key in login_attempts:
+            attempts, last_time = login_attempts[key]
+            if now - last_time < LOCKOUT_TIME and attempts >= MAX_ATTEMPTS:
+                return False
+        if client_ip in login_attempts_by_ip:
+            attempts, last_time = login_attempts_by_ip[client_ip]
+            if now - last_time < LOCKOUT_TIME and attempts >= MAX_IP_ATTEMPTS:
+                return False
+        return True
 
 def record_login_attempt(username, success):
-    """记录登录尝试"""
-    _cleanup_expired_attempts()
-    now = datetime.now().timestamp()
-    client_ip = request.remote_addr
-    key = f"{client_ip}:{username}"
-    if success:
-        login_attempts.pop(key, None)
-        login_attempts_by_ip.pop(client_ip, None)
-    else:
-        for store, k in ((login_attempts, key), (login_attempts_by_ip, client_ip)):
-            if k in store:
-                attempts, _ = store[k]
+    """线程安全记录登录尝试。"""
+    with login_attempts_lock:
+        _cleanup_expired_attempts()
+        now = datetime.now().timestamp()
+        client_ip = request.remote_addr
+        key = f"{client_ip}:{username}"
+        if success:
+            login_attempts.pop(key, None)
+            login_attempts_by_ip.pop(client_ip, None)
+        else:
+            for store, k in ((login_attempts, key), (login_attempts_by_ip, client_ip)):
+                attempts = store.get(k, (0, now))[0]
                 store[k] = (attempts + 1, now)
-            else:
-                store[k] = (1, now)
 
 def login_required(f):
     """登录验证装饰器"""
@@ -1398,6 +1398,13 @@ def _telegram_polling_loop():
     while True:
         try:
             if not _setting_bool('tg_command_enabled', '0'):
+                time.sleep(15)
+                continue
+            # 默认管理员密码未修改时，整个 TG 命令通道（含查询）保持关闭。
+            conn = sqlite3.connect(DB_FILE, timeout=10)
+            row = conn.execute("SELECT must_change_password FROM users WHERE username='admin'").fetchone()
+            conn.close()
+            if not row or bool(row[0]):
                 time.sleep(15)
                 continue
             bot_token = get_secret_setting('tg_bot_token', '')
@@ -2017,7 +2024,7 @@ def _enforce_runtime_policy():
     """生产启动拒绝缺失/示例/短密钥，避免“能启动但默认不安全”。"""
     if APP_ENV != 'production':
         return
-    weak = {'change-me', 'changeme', 'password', 'secret', 'token', 'default', 'example', 'test'}
+    weak = {'change-me', 'changeme', 'password', 'secret', 'token', 'default', 'example', 'test', 'replace-with-64-random-hex-characters-do-not-use', 'replace-with-64-random-hex-characters'}
     token_secret = (TOKEN_SECRET or '').strip()
     if not token_secret or len(token_secret) < 32 or token_secret.lower() in weak:
         raise SystemExit('[!] Refusing to start: SNAT_TOKEN_SECRET must be a strong value of at least 32 characters.')

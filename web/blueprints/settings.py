@@ -131,30 +131,49 @@ def alert_settings():
         })
     data = request.json or {}
     current_chat_id = _app.get_setting('tg_chat_id', '').strip()
-    current_command_enabled = _app._setting_bool('tg_command_enabled', '0')
-    requested_command_enabled = bool(data.get('command_enabled', current_command_enabled))
-    chat_changed = 'tg_chat_id' in data and (data.get('tg_chat_id') or '').strip() != current_chat_id
-    command_changed = 'command_enabled' in data and requested_command_enabled != current_command_enabled
-    if (chat_changed or command_changed) and not _app._recent_auth_ok():
-        return jsonify({'success': False, 'error': '修改 Chat ID/启用 Telegram 命令需要重新验证密码', 'reauth_required': True}), 403
-    # 仅当传入了非空 token 时才更新，留空表示「保持原值不变」，便于前端不回显也能改其它项。
-    new_token = (data.get('tg_bot_token') or '').strip()
-    if new_token:
-        # 修改告警密钥属于敏感操作：要求会话最近二次验证过密码。
-        if not _app._recent_auth_ok():
-            return jsonify({'success': False, 'error': '修改告警 token 需要重新验证密码', 'reauth_required': True}), 403
-        _app.set_secret_setting('tg_bot_token', new_token)
-    _app.set_setting('tg_chat_id', str(data.get('tg_chat_id') if 'tg_chat_id' in data else current_chat_id).strip())
+    current = {
+        'command_enabled': _app._setting_bool('tg_command_enabled', '0'),
+        'daily_summary_enabled': _app._setting_bool('tg_enable_daily_summary', '1'),
+        'audit_enabled': _app._setting_bool('tg_enable_audit', '1'),
+        'limit_alerts_enabled': _app._setting_bool('tg_enable_limit_alerts', '1'),
+    }
+    values = {}
+    for key, default in current.items():
+        value = data.get(key, default)
+        if type(value) is not bool:
+            return jsonify({'success': False, 'error': f'{key} 必须为 JSON true/false'}), 400
+        values[key] = value
+    chat_id = str(data.get('tg_chat_id', current_chat_id) or '').strip()
+    new_token = str(data.get('tg_bot_token') or '').strip()
     try:
         offline_seconds = int(data.get('offline_seconds', _app.get_setting('alert_offline_seconds', '300') or '300'))
-        _app.set_setting('alert_offline_seconds', str(offline_seconds))
+        if not 10 <= offline_seconds <= 86400: raise ValueError
     except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'offline_seconds 必须为整数'}), 400
-    _app.set_setting('tg_command_enabled', '1' if requested_command_enabled else '0')
-    _app.set_setting('tg_enable_daily_summary', '1' if data.get('daily_summary_enabled', _app._setting_bool('tg_enable_daily_summary', '1')) else '0')
-    _app.set_setting('tg_daily_summary_time', str(data.get('daily_summary_time', _app.get_setting('tg_daily_summary_time', '09:00')) or '09:00').strip()[:5] or '09:00')
-    _app.set_setting('tg_enable_audit', '1' if data.get('audit_enabled', _app._setting_bool('tg_enable_audit', '1')) else '0')
-    _app.set_setting('tg_enable_limit_alerts', '1' if data.get('limit_alerts_enabled', _app._setting_bool('tg_enable_limit_alerts', '1')) else '0')
+        return jsonify({'success': False, 'error': 'offline_seconds 必须为 10-86400 的整数'}), 400
+    daily_time = str(data.get('daily_summary_time', _app.get_setting('tg_daily_summary_time', '09:00')) or '').strip()
+    import re
+    if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', daily_time):
+        return jsonify({'success': False, 'error': 'daily_summary_time 必须为 HH:MM'}), 400
+    if (new_token or chat_id != current_chat_id or values['command_enabled'] != current['command_enabled']) and not _app._recent_auth_ok():
+        return jsonify({'success': False, 'error': '修改 Token/Chat ID/Telegram 命令需要重新验证密码', 'reauth_required': True}), 403
+
+    entries = {
+        'tg_chat_id': chat_id, 'alert_offline_seconds': str(offline_seconds),
+        'tg_command_enabled': '1' if values['command_enabled'] else '0',
+        'tg_enable_daily_summary': '1' if values['daily_summary_enabled'] else '0',
+        'tg_daily_summary_time': daily_time,
+        'tg_enable_audit': '1' if values['audit_enabled'] else '0',
+        'tg_enable_limit_alerts': '1' if values['limit_alerts_enabled'] else '0',
+    }
+    if new_token: entries['tg_bot_token'] = _app.encrypt_token(new_token)
+    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
+    try:
+        conn.executemany('INSERT INTO settings_kv(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP', entries.items())
+        conn.commit()
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        conn.close()
     _app.audit_log('update_alert_settings', 'alerts')
     return jsonify({'success': True})
 

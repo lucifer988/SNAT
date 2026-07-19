@@ -85,4 +85,19 @@ class SecurityRound11(unittest.TestCase):
         value=con.execute("SELECT value FROM settings_kv WHERE key='tg_command_enabled'").fetchone()[0]
         con.close(); self.assertEqual(value,'1')
 
+    def test_alert_invalid_update_is_atomic(self):
+        con=sqlite3.connect(webapp.DB_FILE)
+        con.execute("INSERT OR REPLACE INTO settings_kv(key,value) VALUES('tg_chat_id','old')")
+        con.commit(); con.close()
+        with self.client.session_transaction() as s: s['last_reauth']=__import__('time').time()
+        r=self.client.post('/api/settings/alerts',json={'tg_chat_id':'new','offline_seconds':'bad'},headers={'X-CSRF-Token':'csrf'})
+        self.assertEqual(r.status_code,400)
+        con=sqlite3.connect(webapp.DB_FILE); value=con.execute("SELECT value FROM settings_kv WHERE key='tg_chat_id'").fetchone()[0]; con.close()
+        self.assertEqual(value,'old')
+
+    def test_alert_boolean_rejects_string_false(self):
+        with self.client.session_transaction() as s: s['last_reauth']=__import__('time').time()
+        r=self.client.post('/api/settings/alerts',json={'command_enabled':'false'},headers={'X-CSRF-Token':'csrf'})
+        self.assertEqual(r.status_code,400)
+
 if __name__=='__main__': unittest.main()

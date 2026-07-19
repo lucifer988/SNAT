@@ -1035,7 +1035,7 @@ def restore_rules():
             continue
         add_snat_rule(int(local_port), rule['target_ip'], rule['target_port'], target_host=rule.get('target_host'))
 
-_WEAK_TOKENS={DEFAULT_AGENT_TOKEN,'change-me','changeme','password','passw0rd','token','secret','admin','test','123456','12345678','default'}
+_WEAK_TOKENS={DEFAULT_AGENT_TOKEN,'change-me','changeme','password','passw0rd','token','secret','admin','test','123456','12345678','default','replace-with-64-random-hex-characters','replace-with-64-random-hex-characters-DO-NOT-USE'}
 def _enforce_token_policy():
     if (TOKEN in _WEAK_TOKENS or len(TOKEN)<16) and not ALLOW_DEFAULT_TOKEN:
         raise SystemExit('[!] Refusing to start: AGENT_TOKEN is weak or shorter than 16 characters.')

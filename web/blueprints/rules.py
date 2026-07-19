@@ -228,8 +228,11 @@ def update_or_delete_rule(rule_id):
         _app.audit_log('update_rule', f"{_app.circled_num(new_rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f"-> {data['target_ip']}:{data['target_port']}")
         if new_rule_id != rule_id:
             _app.audit_log('renumber_rule', f"{_app.circled_num(new_rule_id)}{rule['server_name']}:{data['local_port']}", 'success', f'编号 {rule_id} → {new_rule_id}')
-        _app.sync_server_rules(rule['server_id'], log_prefix=f'[编辑] 服务器 {rule["server_id"]}')
-        return jsonify({'success': True, 'id': new_rule_id})
+        sync_results = _app.sync_server_rules(rule['server_id'], log_prefix=f'[编辑] 服务器 {rule["server_id"]}')
+        warning = None
+        if any(x.get('status') not in ('ok', 'added') for x in sync_results):
+            warning = '规则已保存，但 Agent 全量同步存在失败，请执行一致性检查'
+        return jsonify({'success': True, 'id': new_rule_id, 'warning': warning})
 
     # DELETE
     c.execute('''SELECT r.*, s.host, s.port, s.token, s.name AS server_name

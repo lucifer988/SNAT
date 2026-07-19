@@ -105,14 +105,14 @@ Agent 默认 `AGENT_ALLOW_BEARER=0`，只接受带 nonce 的 HMAC 签名请求�
 
 | 变量 | 端 | 默认 | 说明 |
 |------|----|------|------|
-| `AGENT_HOST` | Agent | `0.0.0.0` | 监听地址。外网务必设为 WG 内网 IP |
+| `AGENT_HOST` | Agent | `127.0.0.1` | 默认仅回环；远程面板对接时显式设为 WG/可信内网 IP |
 | `AGENT_PORT` | Agent | `8888` | 监听端口 |
 | `AGENT_ALLOW_BEARER` | Agent | `0` | 严格签名模式；迁移旧面板时才临时设 `1` |
 | `AGENT_SIGNED_REQUEST_TTL` | Agent | `300` | 签名有效期（秒），防重放窗口 |
 | `AGENT_TOKEN` | Agent | 无（必填） | 与面板共享的密钥，签名与认证的根 |
 | `AGENT_TARGET_ALLOW_ALL` | Agent | `0` | 置 1 可放行任意 DNAT 目标（含链路本地/元数据）。默认拒绝 169.254/fe80 |
 | `AGENT_TARGET_DENY_CIDRS` | Agent | 空 | 追加禁止的 DNAT 目标网段（逗号分隔 CIDR），如想连私网也禁可加 `10.0.0.0/8` 等 |
-| `AGENT_SET_FORWARD_POLICY_ACCEPT` | Agent | `1` | 置 0 不再把 FORWARD 默认策略设为 ACCEPT，仅放行受管流，避免本机变开放转发 |
+| `AGENT_SET_FORWARD_POLICY_ACCEPT` | Agent | `0` | 置 1 才会把 FORWARD 默认策略设为 ACCEPT；默认仅放行受管流 |
 | `SNAT_SECRET_KEY` | 面板 | 无 | Flask session 密钥；不设则落盘到 `.secret_key`。设置后可集中托管/轮换 |
 | `WEB_MAX_CONTENT_LENGTH` | 面板 | `4194304` | 请求体大小上限（字节），防超大 import body 撑爆单进程 |
 | `SNAT_TOKEN_SECRET` | 面板 | 无（生产必填） | Agent token 落库加密密钥 |
