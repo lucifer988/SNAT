@@ -973,7 +973,7 @@
             color: #7dd3fc;
             font-weight: 700;
         }
-        .tree-server-rules { background: rgba(255,255,255,.02); }
+        .tree-server-rules { background: rgba(255,255,255,.02); padding: 8px 4px; }
         .tree-rule {
             border-left: 3px solid #38bdf8;
             box-shadow: 0 8px 18px rgba(0,0,0,.18);
@@ -981,6 +981,8 @@
             background: rgba(255,255,255,.03);
             color: #1f2937;
             text-align: center;
+            width: 100%;
+            box-sizing: border-box;
         }
         .tree-rule-main,
         .tree-rule-info,
@@ -990,8 +992,8 @@
             padding-left: 14px;
         }
         .tree-rule-target { flex: 1; color: #1f2937; text-align: left; }
-        .tree-rule-info { color: #374151; }
-        .tree-rule-actions { justify-content: flex-start; }
+        .tree-rule-info { color: #374151; gap: 22px; margin-top: 12px; line-height: 1.6; }
+        .tree-rule-actions { justify-content: flex-start; margin-top: 14px; gap: 10px; }
         .tree-rule-actions button { color: #fff; border: none; }
         .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #f59e0b, #f97316); }
         .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #3b82f6, #6366f1); }
