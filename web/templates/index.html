@@ -656,13 +656,26 @@
                 box-shadow: 0 0 0 3px rgba(102,126,234,0.2);
             }
             
-            /* 规则卡片点击展开 */
-            .rule-card { cursor: pointer; transition: box-shadow 0.2s, transform 0.2s; }
-            .rule-card:active { transform: scale(0.98); }
-            .rule-card .rule-card-extra { display: none; }
-            .rule-card.expanded .rule-card-extra { display: block; }
-            
-            /* 服务器卡片点击反馈 */
+            /* 移动端规则：主行稍微下移，操作按钮扩大触控区并置于最上层，避免被卡片/波纹层挡住。 */
+            .tree-rule-main { margin-top: 4px; }
+            .tree-rule-actions { margin-top: 2px; padding-top: 2px; }
+            .tree-rule-actions button {
+                position: relative;
+                z-index: 2;
+                pointer-events: auto;
+                min-width: 64px;
+                min-height: 44px;
+                padding: 10px 14px;
+            }
+            .tree-rule input[type="checkbox"],
+            .tree-server-header input[type="checkbox"] {
+                position: relative;
+                z-index: 3;
+                pointer-events: auto;
+            }
+            button::after { pointer-events: none; }
+
+            /* 规则卡片中的文字下移一点，给顶部复选框和主行留触控空间。 */
             #serversTable tbody tr { cursor: pointer; transition: box-shadow 0.2s; }
             #serversTable tbody tr:active { box-shadow: 0 4px 12px rgba(102,126,234,0.2); }
             
