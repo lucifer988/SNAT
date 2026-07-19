@@ -363,7 +363,7 @@ function formatCreatedAt(value) {
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
-    return `${y}-${m}-${day}<br>${hh}:${mm}:${ss}`;
+    return `${y}-${m}-${day} ${hh}:${mm}:${ss}`;
 }
 
 // 显示添加服务器模态框
