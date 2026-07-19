@@ -256,7 +256,7 @@ function renderRulesTree() {
                     <span class="tree-server-count">${serverRules.length} 条规则</span>
                     <span class="tree-arrow">${collapsed ? '▶' : '▼'}</span>
                 </div>
-                <div class="tree-server-rules" id="tree-${esc(sn.replace(/'/g, "_"))}" style="${collapsed ? 'display:none' : ''}">
+                <div class="tree-server-rules ${collapsed ? '' : 'expanded'}" id="tree-${esc(sn.replace(/'/g, "_"))}" style="${collapsed ? 'display:none' : ''}">
                     ${serverRules.map((r, idx) => renderTreeRule(r, idx)).join('')}
                 </div>
             </div>
