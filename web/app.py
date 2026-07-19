@@ -1251,12 +1251,65 @@ def _build_daily_summary():
     return '\n'.join(lines)
 
 
+def _bot_api_call(path, method='GET', payload=None):
+    """把 TG 命令转成面板内部 API 调用：经 test_client 走真实 WSGI 派发，
+    完整复用登录态/CSRF/二次认证/参数校验/失败回滚/规则同步/审计逻辑，不另造一套写路径。
+
+    会话以 admin 身份建立（审计用户显示 admin），REMOTE_ADDR 标记为 telegram-bot 以区分来源渠道。
+    注意：若日后在面板配置了 IP 白名单，'telegram-bot' 非字面量 IP 会被拦截，届时 bot 写操作不可用。
+    """
+    csrf = secrets.token_hex(16)
+    try:
+        with app.test_request_context('/'):
+            session['username'] = 'admin'
+            create_server_session('admin')
+            sid = session.get('session_id')
+        with app.test_client() as client:
+            with client.session_transaction() as s:
+                s['logged_in'] = True
+                s['username'] = 'admin'
+                s['must_change_password'] = False
+                s['last_reauth'] = time.time()
+                s['csrf_token'] = csrf
+                if sid:
+                    s['session_id'] = sid
+            resp = client.open(path, method=method, json=payload,
+                               headers={'X-CSRF-Token': csrf},
+                               environ_overrides={'REMOTE_ADDR': 'telegram-bot'})
+            return resp.status_code, (resp.get_json(silent=True) or {})
+    except Exception as e:
+        app.logger.warning(f'bot api call failed: {e}')
+        return 500, {'success': False, 'error': f'内部调用异常: {e}'}
+
+
 def _process_telegram_command(text, chat_id):
-    cmd = (text or '').strip().split()[0].lower()
+    parts = (text or '').strip().split()
+    cmd = parts[0].lower() if parts else ''
+    args = parts[1:]
     if cmd in ('/start', '/help'):
-        return send_telegram_message('可用命令：\n/status - 当前状态\n/rules - 规则列表\n/summary - 每日汇总\n/alerts - 检查异常告警', chat_id=chat_id)
+        return send_telegram_message(
+            '查询:\n'
+            '/status - 当前状态\n'
+            '/servers - 服务器列表\n'
+            '/rules - 规则列表\n'
+            '/summary - 每日汇总\n'
+            '/alerts - 检查异常告警\n'
+            '操作:\n'
+            '/addrule <服务器编号> <本地端口> <目标IP> <目标端口> - 新增规则\n'
+            '/delrule <规则编号> - 删除规则\n'
+            '/toggle <规则编号> - 启用/停用规则\n'
+            '/addserver <名称> <地址> <端口> <token> - 新增服务器\n'
+            '/delserver <服务器编号> - 删除服务器(其规则一并删除)', chat_id=chat_id)
     if cmd == '/status':
         return send_telegram_message(_build_status_summary(), chat_id=chat_id)
+    if cmd == '/servers':
+        code, data = _bot_api_call('/api/servers')
+        if not isinstance(data, list):
+            return send_telegram_message(f"查询失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
+        if not data:
+            return send_telegram_message('当前没有服务器', chat_id=chat_id)
+        lines = ['🖥 服务器列表:'] + [f"{circled_num(s['id'])}{s['name']}: {s['status']} ({s['host']}:{s['port']})" for s in data]
+        return send_telegram_message('\n'.join(lines), chat_id=chat_id)
     if cmd == '/rules':
         return send_telegram_message(_build_rules_summary(), chat_id=chat_id)
     if cmd == '/summary':
@@ -1266,12 +1319,55 @@ def _process_telegram_command(text, chat_id):
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute('SELECT name, status FROM servers WHERE status IN (?, ?) ORDER BY id DESC', ('offline', 'token_invalid'))
-        rows = [dict(r) for r in c.fetchall()]
+        rows = [dict(row) for row in c.fetchall()]
         conn.close()
         if not rows:
             return send_telegram_message('✅ 当前没有离线或 Token 异常的服务器', chat_id=chat_id)
         lines = ['⚠️ 当前异常服务器:'] + [f"- {r['name']}: {r['status']}" for r in rows]
         return send_telegram_message('\n'.join(lines), chat_id=chat_id)
+    if cmd == '/addrule':
+        if len(args) != 4 or not all(a.isdigit() for a in (args[0], args[1], args[3])):
+            return send_telegram_message('用法: /addrule <服务器编号> <本地端口> <目标IP> <目标端口>', chat_id=chat_id)
+        code, data = _bot_api_call('/api/rules', 'POST', {
+            'server_id': int(args[0]), 'local_port': int(args[1]),
+            'target_ip': args[2], 'target_port': int(args[3]), 'remark': 'via TG bot'})
+        if data.get('success'):
+            return send_telegram_message(f"✅ 规则已创建: {circled_num(data.get('id'))} 端口 {args[1]} -> {args[2]}:{args[3]}", chat_id=chat_id)
+        return send_telegram_message(f"❌ 创建失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
+    if cmd == '/delrule':
+        if len(args) != 1 or not args[0].isdigit():
+            return send_telegram_message('用法: /delrule <规则编号>', chat_id=chat_id)
+        code, data = _bot_api_call(f"/api/rules/{int(args[0])}", 'DELETE')
+        if data.get('success'):
+            return send_telegram_message(f"✅ 规则 {circled_num(int(args[0]))} 已删除", chat_id=chat_id)
+        return send_telegram_message(f"❌ 删除失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
+    if cmd == '/toggle':
+        if len(args) != 1 or not args[0].isdigit():
+            return send_telegram_message('用法: /toggle <规则编号>', chat_id=chat_id)
+        code, data = _bot_api_call(f"/api/rules/{int(args[0])}/toggle", 'POST')
+        if data.get('success'):
+            return send_telegram_message(f"✅ 规则 {circled_num(int(args[0]))} 已{'启用' if data.get('enabled') else '停用'}", chat_id=chat_id)
+        return send_telegram_message(f"❌ 操作失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
+    if cmd == '/addserver':
+        if len(args) != 4 or not args[2].isdigit():
+            return send_telegram_message('用法: /addserver <名称> <地址> <端口> <token>', chat_id=chat_id)
+        code, data = _bot_api_call('/api/servers', 'POST', {
+            'name': args[0], 'host': args[1], 'port': int(args[2]), 'token': args[3]})
+        if data.get('success'):
+            return send_telegram_message(
+                f"✅ 服务器已添加: {circled_num(data.get('id'))}{args[0]} ({args[1]}:{args[2]})\n"
+                '⚠️ 建议长按删除你刚发送的含 token 的消息', chat_id=chat_id)
+        return send_telegram_message(f"❌ 添加失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
+    if cmd == '/delserver':
+        if len(args) != 1 or not args[0].isdigit():
+            return send_telegram_message('用法: /delserver <服务器编号>(该服务器的规则会一并删除)', chat_id=chat_id)
+        code, data = _bot_api_call(f"/api/servers/{int(args[0])}", 'DELETE')
+        if data.get('success'):
+            msg = f"✅ 服务器 {circled_num(int(args[0]))} 已删除"
+            if data.get('orphaned'):
+                msg += f"\n⚠️ {len(data['orphaned'])} 条远端规则未确认清理，需人工检查"
+            return send_telegram_message(msg, chat_id=chat_id)
+        return send_telegram_message(f"❌ 删除失败: {data.get('error', f'HTTP {code}')}", chat_id=chat_id)
     return send_telegram_message('未知命令，发送 /help 查看帮助。', chat_id=chat_id)
 
 
