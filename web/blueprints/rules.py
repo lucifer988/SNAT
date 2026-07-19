@@ -174,6 +174,21 @@ def update_or_delete_rule(rule_id):
                 conn.close()
                 return jsonify({'success': False, 'error': '该服务器端口已存在规则'}), 400
 
+        # 所有纯数据库校验必须在调用 Agent 之前完成；否则“目标地址已改、编号却冲突”
+        # 会造成 Agent 与面板数据库不一致。
+        new_rule_id = rule_id
+        if data.get('new_id') not in (None, ''):
+            try:
+                new_rule_id = int(data['new_id'])
+            except (TypeError, ValueError):
+                conn.close(); return jsonify({'success': False, 'error': '新编号必须为整数'}), 400
+            if not (1 <= new_rule_id <= 999999):
+                conn.close(); return jsonify({'success': False, 'error': '新编号范围 1-999999'}), 400
+            if new_rule_id != rule_id:
+                c.execute('SELECT id FROM rules WHERE id = ?', (new_rule_id,))
+                if c.fetchone():
+                    conn.close(); return jsonify({'success': False, 'error': f'编号 {new_rule_id} 已被占用'}), 400
+
         if port_changed or ip_changed or target_port_changed or host_changed:
             token = _app.decrypt_token(rule['token']); base=f"http://{rule['host']}:{rule['port']}"
             try:
@@ -199,20 +214,9 @@ def update_or_delete_rule(rule_id):
             payload=resp.json() or {}
             data['target_ip']=payload.get('resolved_ip',data['target_ip']); data['target_host']=payload.get('target_host',data.get('target_host',''))
 
-        # 编号改绑(可选): new_id 与本次字段修改同一事务提交, 冲突/越界直接拒绝
-        new_rule_id = rule_id
-        if data.get('new_id') not in (None, ''):
-            try:
-                new_rule_id = int(data['new_id'])
-            except (TypeError, ValueError):
-                conn.close(); return jsonify({'success': False, 'error': '新编号必须为整数'}), 400
-            if not (1 <= new_rule_id <= 999999):
-                conn.close(); return jsonify({'success': False, 'error': '新编号范围 1-999999'}), 400
-            if new_rule_id != rule_id:
-                c.execute('SELECT id FROM rules WHERE id = ?', (new_rule_id,))
-                if c.fetchone():
-                    conn.close(); return jsonify({'success': False, 'error': f'编号 {new_rule_id} 已被占用'}), 400
-                c.execute('UPDATE rules SET id = ? WHERE id = ?', (new_rule_id, rule_id))
+        # 编号改绑(可选): 所有校验已在 Agent 操作前完成；这里与字段修改同事务提交。
+        if new_rule_id != rule_id:
+            c.execute('UPDATE rules SET id = ? WHERE id = ?', (new_rule_id, rule_id))
 
         c.execute('''UPDATE rules SET local_port=?, target_host=?, target_ip=?, target_port=?, remark=?, traffic_limit_gb=?
                     WHERE id=?''',
