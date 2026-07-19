@@ -741,7 +741,7 @@
         .tree-server { margin-bottom: 10px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); background: #fff; }
         .tree-server-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; font-weight: 600; }
         .tree-server-icon { font-size: 20px; color: #fbcfe8; text-shadow: 0 0 8px #f9a8d4; }
-        .tree-server-name { flex: 1; font-size: 15px; }
+        .tree-server-name { flex: 1; font-size: 15px; color: #67e8f9; font-weight: 800; text-shadow: 0 0 10px rgba(34,211,238,.35); }
         .tree-server-count { font-size: 12px; background: rgba(255,255,255,0.25); padding: 3px 10px; border-radius: 12px; }
         .tree-arrow { font-size: 12px; transition: transform 0.3s; }
         .tree-server-header.expanded .tree-arrow { transform: rotate(180deg); }
@@ -1064,6 +1064,30 @@
         .container, .section, .modal-content { touch-action: pan-y; }
         .table-wrap, #rulesTree, #rulesList, #auditContent, #logsContent, #diagResults { -webkit-overflow-scrolling: touch; }
         a { color: #38bdf8; }
+
+        /* 最终移动端覆盖：必须放在所有桌面默认规则之后，避免后置 #rulesList/.mobile-bottom-bar display:none 吞掉触控按钮。 */
+        @media (max-width: 768px) {
+            #rulesTable { display: none; }
+            #rulesList { display: block; }
+            .mobile-bottom-bar { display: flex; }
+            .tree-server-rules.expanded { display: block; }
+            .tree-rule-actions { display: flex; position: relative; z-index: 2; }
+            .tree-rule-actions button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 64px;
+                min-height: 44px;
+                pointer-events: auto;
+                touch-action: manipulation;
+            }
+            .tree-rule input[type="checkbox"],
+            .tree-server-header input[type="checkbox"],
+            .mobile-bottom-bar button {
+                pointer-events: auto;
+                touch-action: manipulation;
+            }
+        }
     </style>
 </head>
 <body>
