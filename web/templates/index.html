@@ -983,6 +983,7 @@
             text-align: center;
             width: 100%;
             box-sizing: border-box;
+            padding-bottom: 18px;
         }
         .tree-rule-main,
         .tree-rule-info,
@@ -993,7 +994,8 @@
         }
         .tree-rule-target { flex: 1; color: #1f2937; text-align: left; }
         .tree-rule-info { color: #374151; gap: 22px; margin-top: 12px; line-height: 1.6; }
-        .tree-rule-actions { justify-content: flex-start; margin-top: 6px; gap: 10px; }
+        .tree-rule-actions { justify-content: flex-start; margin-top: 2px; gap: 10px; }
+        .tree-rule:not(:last-child) { margin-bottom: 12px; }
         .tree-rule-actions button { color: #fff; border: none; }
         .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #f59e0b, #f97316); }
         .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #3b82f6, #6366f1); }
