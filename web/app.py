@@ -1086,15 +1086,8 @@ def create_rule_snapshot(reason='manual'):
 
 
 def send_alert(message):
-    bot_token = get_secret_setting('tg_bot_token', '')
-    chat_id = get_setting('tg_chat_id', '')
-    if not bot_token or not chat_id:
-        return False, 'tg bot not configured'
-    try:
-        resp = requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', json={'chat_id': chat_id, 'text': message}, timeout=8)
-        return resp.status_code < 300, f'http {resp.status_code}'
-    except Exception as e:
-        return False, str(e)
+    # 与主发送路径统一（含重试），避免两条发送逻辑漂移。
+    return send_telegram_message(message)
 
 
 def _setting_bool(key, default='0'):
@@ -1113,15 +1106,23 @@ def send_telegram_message(message, chat_id=None):
     target_chat_id = str(chat_id or get_setting('tg_chat_id', '')).strip()
     if not bot_token or not target_chat_id:
         return False, 'tg bot not configured'
-    try:
-        resp = requests.post(
-            f'https://api.telegram.org/bot{bot_token}/sendMessage',
-            json={'chat_id': target_chat_id, 'text': message},
-            timeout=10
-        )
-        return resp.status_code < 300, f'http {resp.status_code}'
-    except Exception as e:
-        return False, str(e)
+    # 代理链路存在约 1-2 成瞬时失败（实测 SSL EOF/连接重置），重试 3 次再放弃，避免告警丢失。
+    last_err = 'unknown'
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                json={'chat_id': target_chat_id, 'text': message},
+                timeout=10
+            )
+            if resp.status_code < 300:
+                return True, f'http {resp.status_code}'
+            last_err = f'http {resp.status_code}'
+        except Exception as e:
+            last_err = str(e)
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+    return False, last_err
 
 
 def _telegram_dedupe_ok(key, cooldown_seconds=300):
