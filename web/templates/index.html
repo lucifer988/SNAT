@@ -735,17 +735,7 @@
         .tree-server-header.expanded .tree-arrow { transform: rotate(180deg); }
         .tree-server-rules { display: none; padding: 8px; background: #f8f9fa; }
         .tree-server-rules.expanded { display: block; }
-        .tree-rule {
-            padding: 12px;
-            margin: 0 0 8px 14px;
-            width: calc(100% - 14px);
-            box-sizing: border-box;
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-            border-left: 4px solid #667eea;
-            transition: box-shadow 0.2s, transform 0.15s;
-        }
+        .tree-rule { padding: 12px; margin-bottom: 8px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border-left: 4px solid #667eea; transition: box-shadow 0.2s, transform 0.15s; }
         .tree-rule:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); transform: translateX(2px); }
         .tree-rule:last-child { margin-bottom: 0; }
         .tree-rule-main { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
@@ -981,14 +971,23 @@
         }
         .tree-server-rules { background: rgba(255,255,255,.02); }
         .tree-rule {
-            margin-left: 14px;
-            width: calc(100% - 14px);
-            box-sizing: border-box;
             border-left: 3px solid #38bdf8;
             box-shadow: 0 8px 18px rgba(0,0,0,.18);
             border-radius: 12px;
             background: rgba(255,255,255,.03);
+            color: #e2e8f0;
+            text-align: center;
         }
+        .tree-rule-main,
+        .tree-rule-info,
+        .tree-rule-actions {
+            justify-content: center;
+            text-align: center;
+        }
+        .tree-rule-target { flex: 0 1 auto; color: #e2e8f0; }
+        .tree-rule-info { color: #94a3b8; }
+        .tree-rule-actions { justify-content: center; }
+        .tree-rule button { color: #fff; }
         .tree-rule:hover { box-shadow: 0 12px 26px rgba(0,0,0,.22); }
         .tree-rule-port { color: #38bdf8; }
 
