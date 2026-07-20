@@ -38,10 +38,43 @@ sudo ./install.sh --type agent --port 8888
 
 ---
 
-## 二、外网部署（跨机房 / 公网，**推荐 WireGuard**）
+## 二、外网部署（跨机房 / 公网，**安装器自动配置 WireGuard**）
 
-明文 HTTP 在公网上，**即使加了签名，token 和转发规则内容仍会被嗅探**——这是协议层堵不住的，
-所以外网必须有传输层加密。用自带的 `wireguard_setup.sh` 把面板↔Agent 套进隧道：
+公网部署时，安装器默认询问并配置面板 hub 与 Agent spoke。WireGuard 只承载面板↔Agent 管理流量；Agent 不使用默认路由隧道，普通公网、测速和 SNAT 转发仍直连直出。
+
+### 自动安装流程
+
+面板安装时接受默认的 WireGuard 询问：
+
+```bash
+sudo ./install.sh --type web --mode 2
+```
+
+记录输出的面板公钥、公网 IP 和 UDP 端口。Agent 安装时接受默认的 WireGuard 询问，填写面板公网 IP、面板公钥和本机分配的 WG 地址（例如 `10.66.66.2`）。安装器会自动写入 `wg0.conf`，并让 Agent 只监听该 WG 地址。最后回到面板机把 Agent 公钥加入 peer，在面板服务器地址中填写 Agent WG 地址。
+
+真正无人值守接入时，先由已登录管理员调用 `POST /api/wireguard/enrollment` 创建 10 分钟有效的一次性注册码；Agent 安装通过环境变量 `WG_ENROLL_TOKEN` 和 `--wg-enroll-url` 提交公钥。注册码成功使用一次后立即失效，面板通过只允许 `add` 的 root helper 写入 peer：
+
+```bash
+WG_ENROLL_TOKEN='<一次性注册码>' sudo -E ./install.sh --type agent --wireguard yes \
+  --wg-enroll-url https://panel.example.com \
+  --wg-panel-public-ip <面板公网IP> --wg-panel-public-key <面板公钥> \
+  --wg-agent-ip 10.66.66.2 --wg-hub-ip 10.66.66.1 --wg-port 51820
+```
+
+注册码不接受命令行参数，避免进入 shell history；建议使用临时环境并在安装后 `unset WG_ENROLL_TOKEN`。
+
+显式参数方式：
+
+```bash
+sudo ./install.sh --type web --mode 2 --wireguard yes --wg-port 51820 --wg-hub-ip 10.66.66.1
+sudo ./install.sh --type agent --wireguard yes --wg-panel-public-ip <面板公网IP> \
+  --wg-panel-public-key <面板公钥> --wg-agent-ip 10.66.66.2 \
+  --wg-hub-ip 10.66.66.1 --wg-port 51820
+```
+
+> Agent 的 `AllowedIPs` 只包含面板 WG 地址 `/32`，不会使用 `0.0.0.0/0`，因此不会接管默认路由。
+
+首次部署或手工维护 peer 时，仍可使用 `wireguard_setup.sh`：
 
 ### 1) 面板机（hub，需有公网 IP + 放行一个 UDP 端口）
 ```bash

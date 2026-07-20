@@ -17,6 +17,59 @@ log_info() { echo -e "${GREEN}[*]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[x]${NC} $1"; }
 
+ask_wireguard_mode() {
+    local prompt="$1"
+    if [ -z "$WIREGUARD_MODE" ]; then
+        read -p "$prompt" WIREGUARD_MODE < /dev/tty
+    fi
+    WIREGUARD_MODE=${WIREGUARD_MODE:-Y}
+}
+
+setup_wireguard_hub() {
+    log_info "配置 WireGuard 面板端（仅面板↔Agent 管理流量，默认路由不变）..."
+    [ -n "${WG_PORT:-}" ] || read -p "WireGuard UDP 端口 [默认 51820]: " WG_PORT < /dev/tty
+    [ -z "$WG_PORT" ] && WG_PORT=51820
+    [ -n "${WG_HUB_IP:-}" ] || read -p "面板 WireGuard 地址 [默认 10.66.66.1]: " WG_HUB_IP < /dev/tty
+    [ -z "$WG_HUB_IP" ] && WG_HUB_IP=10.66.66.1
+    "$WORK_DIR/wireguard_setup.sh" hub "$WG_PORT" "$WG_HUB_IP"
+    install -m 0755 "$WORK_DIR/wg_peer_helper.sh" /usr/local/sbin/snat-wg-peer
+    install -d -m 0755 /etc/sudoers.d
+    printf 'snat-web ALL=(root) NOPASSWD: /usr/local/sbin/snat-wg-peer add *\n' > /etc/sudoers.d/snat-wg-peer
+    chmod 0440 /etc/sudoers.d/snat-wg-peer
+    visudo -cf /etc/sudoers.d/snat-wg-peer >/dev/null
+    WG_PANEL_PUBLIC_IP="${WG_PANEL_PUBLIC_IP:-$(curl -s4 --max-time 5 https://api.ipify.org 2>/dev/null || true)}"
+    WG_PANEL_PUBLIC_KEY="${WG_PANEL_PUBLIC_KEY:-$(cat /etc/wireguard/${WG_IF:-wg0}.pub)}"
+    echo "面板 WireGuard 公钥：$WG_PANEL_PUBLIC_KEY"
+    echo "云安全组必须放行 UDP $WG_PORT；Agent 业务端口不需要公网放行。"
+}
+
+setup_wireguard_agent() {
+    log_info "配置 WireGuard Agent 端（仅面板↔Agent 管理流量，默认路由不变）..."
+    [ -n "${WG_PANEL_PUBLIC_IP:-}" ] || read -p "面板公网 IP: " WG_PANEL_PUBLIC_IP < /dev/tty
+    [ -n "${WG_PANEL_PUBLIC_KEY:-}" ] || read -p "面板 WireGuard 公钥: " WG_PANEL_PUBLIC_KEY < /dev/tty
+    [ -n "${WG_AGENT_IP:-}" ] || read -p "本机 WireGuard 地址（例如 10.66.66.2）: " WG_AGENT_IP < /dev/tty
+    [ -n "${WG_HUB_IP:-}" ] || read -p "面板 WireGuard 地址 [默认 10.66.66.1]: " WG_HUB_IP < /dev/tty
+    [ -z "$WG_HUB_IP" ] && WG_HUB_IP=10.66.66.1
+    [ -n "${WG_PORT:-}" ] || read -p "WireGuard UDP 端口 [默认 51820]: " WG_PORT < /dev/tty
+    [ -z "$WG_PORT" ] && WG_PORT=51820
+    "$WORK_DIR/wireguard_setup.sh" agent "$WG_PANEL_PUBLIC_IP" "$WG_PANEL_PUBLIC_KEY" "$WG_AGENT_IP" "$WG_PORT" "$WG_HUB_IP"
+    if [ -n "${WG_ENROLL_URL:-}" ] && [ -n "${WG_ENROLL_TOKEN:-}" ]; then
+        local peer_pub claim_body
+        peer_pub=$(cat /etc/wireguard/${WG_IF:-wg0}.pub)
+        claim_body=$(python3 - "$WG_ENROLL_TOKEN" "$peer_pub" <<'PY'
+import json,sys
+print(json.dumps({'token':sys.argv[1],'public_key':sys.argv[2]},separators=(',',':')))
+PY
+)
+        curl -fsS --max-time 15 -H 'Content-Type: application/json' -d "$claim_body" "${WG_ENROLL_URL%/}/api/wireguard/enrollment/claim" >/dev/null
+        log_info "WireGuard peer 已自动登记到面板"
+    else
+        log_warn "未提供 enrollment URL/Token；请按输出在面板端手工 add-peer。"
+    fi
+    AGENT_HOST_VALUE="$WG_AGENT_IP"
+    AGENT_ALLOWED_IPS=""
+}
+
 REPO_URL="${SNAT_REPO_URL:-https://github.com/lucifer988/SNAT.git}"
 REPO_BRANCH="${SNAT_REPO_BRANCH:-main}"
 REPO_COMMIT="${SNAT_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
@@ -32,6 +85,12 @@ ADMIN_PASSWORD=""
 AGENT_PORT="8888"
 AGENT_TOKEN=""
 DEPLOY_MODE=""
+WIREGUARD_MODE=""
+WG_PORT=""
+WG_HUB_IP=""
+WG_AGENT_IP=""
+WG_PANEL_PUBLIC_IP=""
+WG_PANEL_PUBLIC_KEY=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -39,6 +98,14 @@ while [[ $# -gt 0 ]]; do
         --password|--token) log_error "$1 已禁用；请使用交互式隐藏输入"; exit 1 ;;
         --port)     AGENT_PORT="$2"; shift 2 ;;
         --mode)     DEPLOY_MODE="$2"; shift 2 ;;
+        --wireguard) WIREGUARD_MODE="$2"; shift 2 ;;
+        --wg-port) WG_PORT="$2"; shift 2 ;;
+        --wg-hub-ip) WG_HUB_IP="$2"; shift 2 ;;
+        --wg-agent-ip) WG_AGENT_IP="$2"; shift 2 ;;
+        --wg-panel-public-ip) WG_PANEL_PUBLIC_IP="$2"; shift 2 ;;
+        --wg-panel-public-key) WG_PANEL_PUBLIC_KEY="$2"; shift 2 ;;
+        --wg-enroll-url) WG_ENROLL_URL="$2"; shift 2 ;;
+        --wg-enroll-token) log_error "$1 已禁用；注册码请通过 WG_ENROLL_TOKEN 环境变量传入，避免进入 shell history"; exit 1 ;;
         *) log_error "未知参数: $1"; exit 1 ;;
     esac
 done
@@ -68,7 +135,7 @@ fi
 
 log_info "安装系统依赖..."
 apt-get update -qq
-apt-get install -y python3 python3-pip python3-flask python3-requests python3-cryptography gunicorn git iptables >/dev/null
+apt-get install -y python3 python3-pip python3-flask python3-requests python3-cryptography gunicorn git iptables sudo >/dev/null
 
 # 拉源代码（一次拉，安装 web/agent 共用）
 log_info "拉取源代码 (${REPO_URL} @ ${REPO_BRANCH})..."
@@ -83,6 +150,13 @@ git -C "$WORK_DIR" checkout --detach "$REPO_COMMIT" >/dev/null 2>&1
 
 install_web() {
     log_info "安装 Web 管理端..."
+
+    echo
+    ask_wireguard_mode "是否同时配置 WireGuard 面板端（推荐公网部署使用）？[Y/n]: "
+    case "$WIREGUARD_MODE" in
+        y|Y|yes|YES) setup_wireguard_hub ;;
+        *) log_warn "跳过 WireGuard；公网 Agent 将无法使用安装器自动安全接入。" ;;
+    esac
 
     if [ -z "$ADMIN_PASSWORD" ]; then
         read -s -p "请输入管理员初始密码（留空自动生成强密码）: " ADMIN_PASSWORD < /dev/tty
@@ -222,6 +296,12 @@ EOF
 install_agent() {
     log_info "安装 Agent 客户端..."
 
+    echo
+    ask_wireguard_mode "是否通过 WireGuard 连接面板（推荐公网部署使用）？[Y/n]: "
+    if [[ "$WIREGUARD_MODE" =~ ^(y|Y|yes|YES)$ ]]; then
+        setup_wireguard_agent
+    fi
+
     if [ -z "$AGENT_PORT" ]; then
         read -p "请输入 Agent 端口 [默认 8888]: " AGENT_PORT < /dev/tty
         [ -z "$AGENT_PORT" ] && AGENT_PORT=8888
@@ -234,7 +314,7 @@ install_agent() {
 
     # 选择 Agent 暴露方式：默认倾向“非公网暴露”。
     AGENT_EXPOSURE_MODE="${AGENT_EXPOSURE_MODE:-}"
-    if [ -z "$AGENT_EXPOSURE_MODE" ]; then
+    if [ -z "$AGENT_EXPOSURE_MODE" ] && [ -z "$WG_AGENT_IP" ]; then
         echo
         echo "请选择 Agent 暴露方式："
         echo "  1) 内网 / WireGuard（推荐）  -> Agent 仅监听内网/WG IP"
@@ -243,12 +323,14 @@ install_agent() {
         [ -z "$AGENT_EXPOSURE_MODE" ] && AGENT_EXPOSURE_MODE=1
     fi
 
-    AGENT_HOST_VALUE="${AGENT_HOST:-}"
+    AGENT_HOST_VALUE="${AGENT_HOST:-${WG_AGENT_IP:-}}"
+    if [ -n "$WG_AGENT_IP" ]; then
+        AGENT_EXPOSURE_MODE=wg
+    fi
     if [ "$AGENT_EXPOSURE_MODE" = "1" ] || [ "$AGENT_EXPOSURE_MODE" = "private" ] || [ "$AGENT_EXPOSURE_MODE" = "wg" ]; then
         if [ -z "$AGENT_HOST_VALUE" ]; then
             echo
             echo "请输入 Agent 要监听的内网/WireGuard IP（例如 10.66.66.2）。"
-            echo "不要填 0.0.0.0；否则会重新暴露到公网。"
             read -p "AGENT_HOST: " AGENT_HOST_VALUE < /dev/tty
         fi
         if [ -z "$AGENT_HOST_VALUE" ] || [ "$AGENT_HOST_VALUE" = "0.0.0.0" ]; then

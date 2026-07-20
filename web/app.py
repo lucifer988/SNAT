@@ -1733,6 +1733,17 @@ def init_db():
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS wg_enrollment_tokens (
+        token TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        agent_ip TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        created_at INTEGER NOT NULL
+    )''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_wg_enrollment_expiry ON wg_enrollment_tokens(expires_at)')
+    c.execute('DELETE FROM wg_enrollment_tokens WHERE expires_at < ?', (int(time.time()) - 86400,))
+
     c.execute('''CREATE TABLE IF NOT EXISTS rule_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
@@ -1756,7 +1767,7 @@ def init_db():
 
 def _register_blueprints():
     """在模块底部统一注册 blueprint，避免与 helpers 形成循环 import。"""
-    from web.blueprints import health, auth, servers, rules, traffic, settings as settings_bp, admin
+    from web.blueprints import health, auth, servers, rules, traffic, settings as settings_bp, admin, wireguard_enroll
     app.register_blueprint(health.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(servers.bp)
@@ -1764,6 +1775,7 @@ def _register_blueprints():
     app.register_blueprint(traffic.bp)
     app.register_blueprint(settings_bp.bp)
     app.register_blueprint(admin.bp)
+    app.register_blueprint(wireguard_enroll.bp)
 
 
 _register_blueprints()

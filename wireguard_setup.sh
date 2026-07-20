@@ -1,72 +1,165 @@
 #!/bin/bash
-# SNAT Manager - WireGuard 隧道一键脚本（hub-and-spoke）
+# SNAT Manager - WireGuard 面板↔Agent 专用隧道（split tunnel）
 #
-# 拓扑：面板 = hub（有公网 IP + 监听端口，agent 拨入），各 Agent = spoke。
-# 隧道建好后，面板用 Agent 的 WG 内网 IP（10.66.66.X）访问 Agent，
-# 全程加密，token 与转发规则都不再出现在公网明文里。
+# 设计目标：WireGuard 只承载面板与 Agent 的管理通信；不接管公网默认路由，
+# 不修改 Agent 的普通直连、测速、SNAT 转发或其它出站流量。
 #
-# 用法：
-#   在面板机：   sudo ./wireguard_setup.sh hub [监听端口默认51820] [hub内网IP默认10.66.66.1]
-#   加一个 Agent：sudo ./wireguard_setup.sh add-peer <名字> <Agent公钥> <AgentWG内网IP>
-#   在 Agent 机： sudo ./wireguard_setup.sh agent <hub公网IP> <hub公钥> <本机WG内网IP> [hub监听端口默认51820]
+# 面板：  ./wireguard_setup.sh hub [UDP端口=51820] [WG网关IP=10.66.66.1]
+# Agent： ./wireguard_setup.sh agent <面板公网IP> <面板公钥> <本机WG IP> [UDP端口=51820] [面板WG IP=10.66.66.1]
+# 面板： ./wireguard_setup.sh add-peer <名称> <Agent公钥> <AgentWG IP>
+# 面板： ./wireguard_setup.sh remove-peer <Agent公钥>
+# 任意： ./wireguard_setup.sh status
 #
-# 典型流程：
-#   1) 面板机跑 hub，记下打印出的 [hub 公钥] 和 [公网 IP:端口]
-#   2) 每台 Agent 机跑 agent ...，记下打印出的 [Agent 公钥]
-#   3) 回到面板机，对每台 Agent 跑一次 add-peer
-#   4) 在面板里把该 Agent 的「地址」填成它的 WG 内网 IP（如 10.66.66.2），端口照旧
-#   5) 把 Agent 的 systemd 环境改成 AGENT_HOST=<它的WG内网IP> 后重启 snat-agent
+# Agent 端 AllowedIPs 只写面板 WG /32；因此只有 Agent↔面板流量走 WG。
 
-set -e
+set -Eeuo pipefail
 WG_IF="${WG_IF:-wg0}"
-WG_CONF="/etc/wireguard/${WG_IF}.conf"
+WG_DIR=/etc/wireguard
+WG_CONF="$WG_DIR/${WG_IF}.conf"
+PRIV_FILE="$WG_DIR/${WG_IF}.priv"
+PUB_FILE="$WG_DIR/${WG_IF}.pub"
 
-need_root() { [ "$EUID" -eq 0 ] || { echo "请用 sudo 运行"; exit 1; }; }
+fail() { echo "[x] $*" >&2; exit 1; }
+need_root() { [ "${EUID:-$(id -u)}" -eq 0 ] || fail "请用 root 运行"; }
+need_arg() { [ -n "${1:-}" ] || fail "$2"; }
 ensure_wg() {
-    command -v wg >/dev/null 2>&1 && return
-    echo "[*] 安装 wireguard..."
-    apt-get update -qq && apt-get install -y wireguard >/dev/null
+    command -v wg >/dev/null 2>&1 && command -v wg-quick >/dev/null 2>&1 && return
+    command -v apt-get >/dev/null 2>&1 || fail "未找到 apt-get，无法自动安装 wireguard-tools"
+    echo "[*] 安装 wireguard-tools..."
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools >/dev/null
 }
-gen_keys() {
+validate_ipv4() { ipaddress="$1"; python3 - "$ipaddress" <<'PY'
+import ipaddress,sys
+try:
+    ip=ipaddress.ip_address(sys.argv[1])
+    if ip.version != 4: raise ValueError
+except ValueError: raise SystemExit(1)
+PY
+}
+validate_ip() { validate_ipv4 "$1" || fail "无效 IPv4 地址：$1"; }
+validate_port() {
+    case "$1" in ''|*[!0-9]*) fail "无效端口：$1";; esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || fail "端口必须为 1-65535：$1"
+}
+validate_pubkey() {
+    printf '%s' "$1" | base64 -d >/dev/null 2>&1 || fail "无效 WireGuard 公钥"
+    [ "${#1}" -eq 44 ] || fail "无效 WireGuard 公钥长度"
+}
+prepare_keys() {
     umask 077
-    mkdir -p /etc/wireguard
-    [ -f /etc/wireguard/${WG_IF}.priv ] || wg genkey | tee /etc/wireguard/${WG_IF}.priv | wg pubkey > /etc/wireguard/${WG_IF}.pub
+    install -d -m 0700 "$WG_DIR"
+    if [ ! -s "$PRIV_FILE" ] || [ ! -s "$PUB_FILE" ]; then
+        wg genkey > "$PRIV_FILE"
+        chmod 600 "$PRIV_FILE"
+        wg pubkey < "$PRIV_FILE" > "$PUB_FILE"
+        chmod 644 "$PUB_FILE"
+    fi
 }
-
+atomic_write() {
+    local target="$1"; local tmp
+    tmp=$(mktemp "$target.tmp.XXXXXX")
+    cat > "$tmp"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$target"
+}
+parse_cidr() {
+    python3 - "$1" "$2" <<'PY'
+import ipaddress,sys
+ip=ipaddress.ip_address(sys.argv[1]); net=ipaddress.ip_network(sys.argv[2],strict=False)
+if ip not in net: raise SystemExit(1)
+PY
+}
 cmd_hub() {
-    need_root; ensure_wg; gen_keys
+    need_root; ensure_wg; prepare_keys
     local port="${1:-51820}" addr="${2:-10.66.66.1}"
-    local priv; priv=$(cat /etc/wireguard/${WG_IF}.priv)
+    validate_port "$port"; validate_ip "$addr"
+    local net; net=$(python3 - "$addr" <<'PY'
+import ipaddress,sys
+print(ipaddress.ip_network(sys.argv[1]+'/24',strict=False))
+PY
+)
+    parse_cidr "$addr" "$net" || fail "WG 网关地址不在网段 $net"
+    local priv; priv=$(<"$PRIV_FILE")
+    if [ -f "$WG_CONF" ] && ! grep -q '^\[Interface\]' "$WG_CONF"; then fail "已有配置格式异常：$WG_CONF"; fi
     if [ ! -f "$WG_CONF" ]; then
-        cat > "$WG_CONF" <<EOF
+        atomic_write "$WG_CONF" <<EOF
 [Interface]
 Address = ${addr}/24
 ListenPort = ${port}
 PrivateKey = ${priv}
 EOF
-        chmod 600 "$WG_CONF"
+    else
+        echo "[*] 保留已有 $WG_CONF，不覆盖现有 peers"
     fi
-    systemctl enable "wg-quick@${WG_IF}" >/dev/null 2>&1 || true
+    systemctl enable "wg-quick@${WG_IF}" >/dev/null
     systemctl restart "wg-quick@${WG_IF}"
-    local pub; pub=$(cat /etc/wireguard/${WG_IF}.pub)
-    local pubip; pubip=$(curl -s4 ifconfig.co 2>/dev/null || echo "<本机公网IP>")
+    local pub public_ip
+    pub=$(<"$PUB_FILE")
+    public_ip=$(curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '<面板公网IP>')
     echo
-    echo "==================== hub 已就绪 ===================="
-    echo "  hub 公钥   : ${pub}"
-    echo "  公网端点   : ${pubip}:${port}   (UDP，请在云防火墙放行)"
-    echo "  hub 内网 IP: ${addr}"
+    echo "==================== WireGuard hub 已就绪 ===================="
+    echo "面板 WG 公钥：$pub"
+    echo "面板公网端点：${public_ip}:${port}/udp"
+    echo "面板 WG 地址：$addr"
+    echo "云安全组/防火墙必须放行 UDP $port；不会接管默认路由。"
     echo
-    echo "在每台 Agent 机执行："
-    echo "  sudo ./wireguard_setup.sh agent ${pubip} ${pub} 10.66.66.X ${port}"
-    echo "拿到 Agent 公钥后，回这台机执行："
-    echo "  sudo ./wireguard_setup.sh add-peer <名字> <Agent公钥> 10.66.66.X"
 }
+cmd_agent() {
+    need_root; ensure_wg; prepare_keys
+    local hub_public="$1" hub_pub="$2" my_ip="$3" port="${4:-51820}" hub_wg_ip="${5:-10.66.66.1}"
+    validate_ip "$hub_public"; validate_pubkey "$hub_pub"; validate_ip "$my_ip"; validate_ip "$hub_wg_ip"; validate_port "$port"
+    local net; net=$(python3 - "$hub_wg_ip" <<'PY'
+import ipaddress,sys
+print(ipaddress.ip_network(sys.argv[1]+'/24',strict=False))
+PY
+)
+    parse_cidr "$my_ip" "$net" || fail "Agent WG 地址必须位于 $net"
+    [ "$my_ip" != "$hub_wg_ip" ] || fail "Agent WG 地址不能与面板相同"
+    local priv; priv=$(<"$PRIV_FILE")
+    atomic_write "$WG_CONF" <<EOF
+[Interface]
+Address = ${my_ip}/24
+PrivateKey = ${priv}
 
+[Peer]
+PublicKey = ${hub_pub}
+Endpoint = ${hub_public}:${port}
+# 关键：只把面板 WG 地址放入隧道；不使用 0.0.0.0/0，不接管其它流量
+AllowedIPs = ${hub_wg_ip}/32
+PersistentKeepalive = 25
+EOF
+    systemctl enable "wg-quick@${WG_IF}" >/dev/null
+    systemctl restart "wg-quick@${WG_IF}"
+    local pub; pub=$(<"$PUB_FILE")
+    echo
+    echo "==================== WireGuard Agent 已就绪 ===================="
+    echo "Agent WG 公钥：$pub"
+    echo "Agent WG 地址：$my_ip"
+    echo "面板 WG 地址：$hub_wg_ip"
+    echo "仅面板↔Agent 管理流量走 WireGuard，其余流量保持原路由。"
+    echo
+    echo "回到面板机执行："
+    echo "  ./wireguard_setup.sh add-peer $(hostname) $pub $my_ip"
+}
 cmd_add_peer() {
-    need_root
-    local name="$1" peer_pub="$2" peer_ip="$3"
-    [ -z "$peer_pub" ] || [ -z "$peer_ip" ] && { echo "用法: add-peer <名字> <Agent公钥> <AgentWG内网IP>"; exit 1; }
-    grep -q "$peer_pub" "$WG_CONF" 2>/dev/null && { echo "该 peer 已存在"; exit 0; }
+    need_root; ensure_wg
+    local name="${1:-}" peer_pub="${2:-}" peer_ip="${3:-}"
+    need_arg "$name" "用法：add-peer <名称> <Agent公钥> <AgentWG IP>"
+    need_arg "$peer_pub" "用法：add-peer <名称> <Agent公钥> <AgentWG IP>"
+    need_arg "$peer_ip" "用法：add-peer <名称> <Agent公钥> <AgentWG IP>"
+    validate_pubkey "$peer_pub"; validate_ip "$peer_ip"
+    [ -f "$WG_CONF" ] || fail "hub 配置不存在，请先执行 hub"
+    grep -Fq "PublicKey = $peer_pub" "$WG_CONF" && { echo "该 peer 已存在，无需重复添加"; exit 0; }
+    local hub_ip; hub_ip=$(awk -F'= ' '/^Address = /{print $2; exit}' "$WG_CONF" | cut -d/ -f1)
+    [ -n "$hub_ip" ] || fail "无法从 hub 配置读取 Address"
+    local net; net=$(python3 - "$hub_ip" <<'PY'
+import ipaddress,sys
+print(ipaddress.ip_network(sys.argv[1]+'/24',strict=False))
+PY
+)
+    parse_cidr "$peer_ip" "$net" || fail "peer 地址必须位于 $net"
+    [ "$peer_ip" != "$hub_ip" ] || fail "peer 地址不能与 hub 相同"
     cat >> "$WG_CONF" <<EOF
 
 # peer: ${name}
@@ -75,46 +168,39 @@ PublicKey = ${peer_pub}
 AllowedIPs = ${peer_ip}/32
 EOF
     wg set "$WG_IF" peer "$peer_pub" allowed-ips "${peer_ip}/32"
-    echo "✓ 已加入 Agent [${name}] -> ${peer_ip}。面板里把该服务器地址填 ${peer_ip} 即可。"
+    echo "✓ 已加入 peer [$name]：$peer_ip"
 }
-
-cmd_agent() {
-    need_root; ensure_wg; gen_keys
-    local hub_ip="$1" hub_pub="$2" my_ip="$3" port="${4:-51820}"
-    [ -z "$hub_ip" ] || [ -z "$hub_pub" ] || [ -z "$my_ip" ] && {
-        echo "用法: agent <hub公网IP> <hub公钥> <本机WG内网IP> [hub监听端口]"; exit 1; }
-    local priv; priv=$(cat /etc/wireguard/${WG_IF}.priv)
-    cat > "$WG_CONF" <<EOF
-[Interface]
-Address = ${my_ip}/24
-PrivateKey = ${priv}
-
-[Peer]
-PublicKey = ${hub_pub}
-Endpoint = ${hub_ip}:${port}
-AllowedIPs = 10.66.66.0/24
-PersistentKeepalive = 25
-EOF
-    chmod 600 "$WG_CONF"
-    systemctl enable "wg-quick@${WG_IF}" >/dev/null 2>&1 || true
+cmd_remove_peer() {
+    need_root; ensure_wg
+    local peer_pub="${1:-}"; need_arg "$peer_pub" "用法：remove-peer <Agent公钥>"; validate_pubkey "$peer_pub"
+    [ -f "$WG_CONF" ] || fail "hub 配置不存在"
+    wg set "$WG_IF" peer "$peer_pub" remove 2>/dev/null || true
+    python3 - "$WG_CONF" "$peer_pub" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); key=sys.argv[2]; lines=p.read_text().splitlines(); out=[]; i=0
+while i<len(lines):
+    if lines[i].strip()=='[Peer]':
+        block=[]; j=i
+        while j<len(lines) and (j==i or not (lines[j].strip() in ('[Peer]','[Interface]'))): block.append(lines[j]); j+=1
+        if any(x.strip()==f'PublicKey = {key}' for x in block): i=j; continue
+    out.append(lines[i]); i+=1
+p.write_text('\n'.join(out).rstrip()+'\n'); p.chmod(0o600)
+PY
     systemctl restart "wg-quick@${WG_IF}"
-    local pub; pub=$(cat /etc/wireguard/${WG_IF}.pub)
-    echo
-    echo "==================== Agent 隧道已配置 ===================="
-    echo "  Agent 公钥 : ${pub}"
-    echo "  本机 WG IP : ${my_ip}"
-    echo
-    echo "请在面板机执行（把 Agent 注册进 hub）："
-    echo "  sudo ./wireguard_setup.sh add-peer $(hostname) ${pub} ${my_ip}"
-    echo
-    echo "然后让 Agent 只在隧道内监听（编辑 /etc/systemd/system/snat-agent.service）："
-    echo "  Environment=\"AGENT_HOST=${my_ip}\""
-    echo "  systemctl daemon-reload && systemctl restart snat-agent"
+    echo "✓ peer 已删除"
 }
-
-case "$1" in
-    hub)       shift; cmd_hub "$@" ;;
-    add-peer)  shift; cmd_add_peer "$@" ;;
-    agent)     shift; cmd_agent "$@" ;;
-    *) echo "用法: $0 {hub|add-peer|agent} ..."; echo "详见脚本头部注释"; exit 1 ;;
+cmd_status() {
+    need_root; ensure_wg
+    systemctl is-active "wg-quick@${WG_IF}" || true
+    wg show "$WG_IF" 2>/dev/null || true
+    ip -4 route show dev "$WG_IF" 2>/dev/null || true
+}
+case "${1:-}" in
+  hub) shift; cmd_hub "$@";;
+  agent) shift; [ "$#" -ge 3 ] || fail "用法：agent <面板公网IP> <面板公钥> <本机WG IP> [端口] [面板WG IP]"; cmd_agent "$@";;
+  add-peer) shift; cmd_add_peer "$@";;
+  remove-peer) shift; cmd_remove_peer "$@";;
+  status) cmd_status;;
+  *) fail "用法：$0 {hub|agent|add-peer|remove-peer|status}";;
 esac
