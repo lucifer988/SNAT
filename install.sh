@@ -16,6 +16,16 @@ NC='\033[0m'
 log_info() { echo -e "${GREEN}[*]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[x]${NC} $1"; }
+validate_agent_bind_ip() {
+    python3 - "$1" <<'PY'
+import ipaddress,sys
+try:
+    ip=ipaddress.ip_address(sys.argv[1])
+    if ip.is_unspecified or ip.is_multicast: raise ValueError
+except ValueError:
+    raise SystemExit('invalid agent bind IP')
+PY
+}
 
 ask_wireguard_mode() {
     local prompt="$1"
@@ -109,6 +119,11 @@ while [[ $# -gt 0 ]]; do
         *) log_error "未知参数: $1"; exit 1 ;;
     esac
 done
+
+if [[ "$WIREGUARD_MODE" =~ ^(n|N|no|NO)$ ]] && [ -n "$WG_AGENT_IP" ]; then
+    log_error "--wireguard no 不能与 --wg-agent-ip 同时使用"
+    exit 1
+fi
 
 if [ ! -f /etc/debian_version ]; then
     log_error "此脚本仅支持 Debian/Ubuntu"
@@ -337,11 +352,12 @@ install_agent() {
             log_error "内网/WireGuard 模式下必须指定一个非 0.0.0.0 的监听 IP"
             exit 1
         fi
+        validate_agent_bind_ip "$AGENT_HOST_VALUE" || { log_error "AGENT_HOST 必须是合法 IP 地址"; exit 1; }
         AGENT_ALLOWED_IPS="${AGENT_ALLOWED_IPS:-}"
     else
         AGENT_HOST_VALUE="0.0.0.0"
         echo
-        log_warn "你选择了"公网直连"：Agent 将在公网端口 ${AGENT_PORT} 上监听。"
+        log_warn "你选择了\"公网直连\"：Agent 将在公网端口 ${AGENT_PORT} 上监听。"
         log_warn "这会让 Agent 进入全网扫描面。即使有签名鉴权，也强烈建议改用 WireGuard/内网模式。"
         if [ -z "${AGENT_ALLOWED_IPS:-}" ]; then
             echo "请至少填写面板出口公网 IP / 网段作为来源白名单。"

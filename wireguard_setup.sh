@@ -43,7 +43,8 @@ validate_port() {
     [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || fail "端口必须为 1-65535：$1"
 }
 validate_pubkey() {
-    printf '%s' "$1" | base64 -d >/dev/null 2>&1 || fail "无效 WireGuard 公钥"
+    decoded=$(printf '%s' "$1" | base64 -d 2>/dev/null) || fail "无效 WireGuard 公钥"
+    [ "${#decoded}" -eq 32 ] || fail "无效 WireGuard 公钥长度"
     [ "${#1}" -eq 44 ] || fail "无效 WireGuard 公钥长度"
 }
 prepare_keys() {
@@ -90,6 +91,10 @@ ListenPort = ${port}
 PrivateKey = ${priv}
 EOF
     else
+        existing_addr=$(awk -F'= ' '/^Address = /{print $2; exit}' "$WG_CONF" | cut -d/ -f1)
+        existing_port=$(awk -F'= ' '/^ListenPort = /{print $2; exit}' "$WG_CONF")
+        [ "$existing_addr" = "$addr" ] || fail "已有 hub 地址为 $existing_addr，与请求的 $addr 不一致"
+        [ "$existing_port" = "$port" ] || fail "已有 hub 端口为 $existing_port，与请求的 $port 不一致"
         echo "[*] 保留已有 $WG_CONF，不覆盖现有 peers"
     fi
     systemctl enable "wg-quick@${WG_IF}" >/dev/null
@@ -119,7 +124,7 @@ PY
     local priv; priv=$(<"$PRIV_FILE")
     atomic_write "$WG_CONF" <<EOF
 [Interface]
-Address = ${my_ip}/24
+Address = ${my_ip}/32
 PrivateKey = ${priv}
 
 [Peer]
@@ -160,6 +165,12 @@ PY
 )
     parse_cidr "$peer_ip" "$net" || fail "peer 地址必须位于 $net"
     [ "$peer_ip" != "$hub_ip" ] || fail "peer 地址不能与 hub 相同"
+    backup=$(mktemp)
+    cp -a "$WG_CONF" "$backup"
+    if ! wg set "$WG_IF" peer "$peer_pub" allowed-ips "${peer_ip}/32"; then
+        rm -f "$backup"
+        fail "运行时加入 peer 失败，未修改持久配置"
+    fi
     cat >> "$WG_CONF" <<EOF
 
 # peer: ${name}
@@ -167,14 +178,14 @@ PY
 PublicKey = ${peer_pub}
 AllowedIPs = ${peer_ip}/32
 EOF
-    wg set "$WG_IF" peer "$peer_pub" allowed-ips "${peer_ip}/32"
+    rm -f "$backup"
     echo "✓ 已加入 peer [$name]：$peer_ip"
 }
 cmd_remove_peer() {
     need_root; ensure_wg
     local peer_pub="${1:-}"; need_arg "$peer_pub" "用法：remove-peer <Agent公钥>"; validate_pubkey "$peer_pub"
     [ -f "$WG_CONF" ] || fail "hub 配置不存在"
-    wg set "$WG_IF" peer "$peer_pub" remove 2>/dev/null || true
+    wg set "$WG_IF" peer "$peer_pub" remove 2>/dev/null || fail "运行时删除 peer 失败，未修改持久配置"
     python3 - "$WG_CONF" "$peer_pub" <<'PY'
 from pathlib import Path
 import sys

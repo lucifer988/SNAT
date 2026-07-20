@@ -17,6 +17,7 @@ class WireGuardStaticTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_agent_is_split_tunnel_only(self):
+        self.assertIn("Address = ${my_ip}/32", self.script)
         self.assertIn("AllowedIPs = ${hub_wg_ip}/32", self.script)
         self.assertNotIn("AllowedIPs = 0.0.0.0/0", self.script)
         self.assertIn("不使用 0.0.0.0/0", self.script)
