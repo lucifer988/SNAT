@@ -186,6 +186,8 @@ git -C "$WORK_DIR" checkout --detach "$REPO_COMMIT" >/dev/null 2>&1
 install_web() {
     log_info "安装 Web 管理端..."
 
+    id -u snat-web >/dev/null 2>&1 || useradd --system --home /opt/snat-manager --shell /usr/sbin/nologin snat-web
+
     echo
     ask_wireguard_mode "是否同时配置 WireGuard 面板端（推荐公网部署使用）？[Y/n]: "
     case "$WIREGUARD_MODE" in
@@ -233,7 +235,6 @@ install_web() {
     case "$ADMIN_PASSWORD" in *$'\n'*|*$'\r'*) log_error "管理员密码不能包含换行符"; exit 1;; esac
     ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD//\\/\\\\}; ADMIN_PASSWORD_ENV=${ADMIN_PASSWORD_ENV//\"/\\\"}
 
-    id -u snat-web >/dev/null 2>&1 || useradd --system --home /opt/snat-manager --shell /usr/sbin/nologin snat-web
     install -d -o root -g root -m 0711 /etc/snat-manager
     install -d -o snat-web -g snat-web -m 0700 /opt/snat-manager/web /var/backups/snat-manager
     chown -R snat-web:snat-web /opt/snat-manager/web /var/backups/snat-manager
