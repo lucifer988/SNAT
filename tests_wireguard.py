@@ -22,6 +22,15 @@ class WireGuardStaticTests(unittest.TestCase):
         self.assertNotIn("AllowedIPs = 0.0.0.0/0", self.script)
         self.assertIn("不使用 0.0.0.0/0", self.script)
 
+    def test_real_panel_public_key_decodes_to_32_bytes(self):
+        key = "LvOoh7VVClW8VzZC3IhN9E+H9X37LsngjKRz2/Ns0ws="
+        result = subprocess.run(
+            ["bash", "-c", 'printf %s "$1" | base64 -d | wc -c', "_", key],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "32")
+        self.assertNotIn("decoded=$(", self.script)
+
     def test_hub_peer_is_single_agent_address(self):
         self.assertIn("AllowedIPs = ${peer_ip}/32", self.script)
         self.assertIn("wg set \"$WG_IF\" peer", self.script)

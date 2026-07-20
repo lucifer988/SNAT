@@ -45,9 +45,8 @@ validate_port() {
     [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || fail "端口必须为 1-65535：$1"
 }
 validate_pubkey() {
-    decoded=$(printf '%s' "$1" | base64 -d 2>/dev/null) || fail "无效 WireGuard 公钥"
-    [ "${#decoded}" -eq 32 ] || fail "无效 WireGuard 公钥长度"
     [ "${#1}" -eq 44 ] || fail "无效 WireGuard 公钥长度"
+    [ "$(printf '%s' "$1" | base64 -d 2>/dev/null | wc -c)" -eq 32 ] || fail "无效 WireGuard 公钥"
 }
 prepare_keys() {
     umask 077
