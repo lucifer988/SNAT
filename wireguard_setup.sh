@@ -18,9 +18,11 @@ WG_DIR=/etc/wireguard
 WG_CONF="$WG_DIR/${WG_IF}.conf"
 PRIV_FILE="$WG_DIR/${WG_IF}.priv"
 PUB_FILE="$WG_DIR/${WG_IF}.pub"
+LOCK_FILE="/run/lock/snat-wg-peer.lock"
 
 fail() { echo "[x] $*" >&2; exit 1; }
 need_root() { [ "${EUID:-$(id -u)}" -eq 0 ] || fail "请用 root 运行"; }
+lock_wg() { exec 9>"$LOCK_FILE"; flock -x 9; }
 need_arg() { [ -n "${1:-}" ] || fail "$2"; }
 ensure_wg() {
     command -v wg >/dev/null 2>&1 && command -v wg-quick >/dev/null 2>&1 && return
@@ -148,7 +150,7 @@ EOF
     echo "  ./wireguard_setup.sh add-peer $(hostname) $pub $my_ip"
 }
 cmd_add_peer() {
-    need_root; ensure_wg
+    need_root; ensure_wg; lock_wg
     local name="${1:-}" peer_pub="${2:-}" peer_ip="${3:-}"
     need_arg "$name" "用法：add-peer <名称> <Agent公钥> <AgentWG IP>"
     need_arg "$peer_pub" "用法：add-peer <名称> <Agent公钥> <AgentWG IP>"
@@ -182,7 +184,7 @@ EOF
     echo "✓ 已加入 peer [$name]：$peer_ip"
 }
 cmd_remove_peer() {
-    need_root; ensure_wg
+    need_root; ensure_wg; lock_wg
     local peer_pub="${1:-}"; need_arg "$peer_pub" "用法：remove-peer <Agent公钥>"; validate_pubkey "$peer_pub"
     [ -f "$WG_CONF" ] || fail "hub 配置不存在"
     wg set "$WG_IF" peer "$peer_pub" remove 2>/dev/null || fail "运行时删除 peer 失败，未修改持久配置"

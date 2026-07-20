@@ -43,10 +43,30 @@ setup_wireguard_hub() {
     [ -z "$WG_HUB_IP" ] && WG_HUB_IP=10.66.66.1
     "$WORK_DIR/wireguard_setup.sh" hub "$WG_PORT" "$WG_HUB_IP"
     install -m 0755 "$WORK_DIR/wg_peer_helper.sh" /usr/local/sbin/snat-wg-peer
-    install -d -m 0755 /etc/sudoers.d
-    printf 'snat-web ALL=(root) NOPASSWD: /usr/local/sbin/snat-wg-peer add *\n' > /etc/sudoers.d/snat-wg-peer
-    chmod 0440 /etc/sudoers.d/snat-wg-peer
-    visudo -cf /etc/sudoers.d/snat-wg-peer >/dev/null
+    install -m 0755 "$WORK_DIR/wg_peer_worker.py" /usr/local/sbin/snat-wg-peer-worker
+    cat > /etc/systemd/system/snat-wg-peer.service <<EOF
+[Unit]
+Description=SNAT WireGuard peer helper
+After=network.target wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/snat-wg-peer-worker
+User=root
+Restart=always
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/wireguard /run
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now snat-wg-peer.service
     WG_PANEL_PUBLIC_IP="${WG_PANEL_PUBLIC_IP:-$(curl -s4 --max-time 5 https://api.ipify.org 2>/dev/null || true)}"
     WG_PANEL_PUBLIC_KEY="${WG_PANEL_PUBLIC_KEY:-$(cat /etc/wireguard/${WG_IF:-wg0}.pub)}"
     echo "面板 WireGuard 公钥：$WG_PANEL_PUBLIC_KEY"

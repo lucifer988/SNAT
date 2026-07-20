@@ -2,6 +2,8 @@
 # root-only helper called by snat-web through sudo. Never accepts shell fragments.
 set -Eeuo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
+exec 9>/run/lock/snat-wg-peer.lock
+flock -x 9
 WG_IF="${WG_IF:-wg0}"
 WG_CONF="/etc/wireguard/${WG_IF}.conf"
 fail(){ echo "[x] $*" >&2; exit 1; }
@@ -24,13 +26,16 @@ for old in re.findall(r'^AllowedIPs\s*=\s*([^/\s]+)/32',text,re.M):
     if ip == ipaddress.ip_address(old): raise SystemExit('peer IP already used')
 PY
 if grep -Fq "PublicKey = $pub" "$WG_CONF"; then fail "public key already used"; fi
-cat >> "$WG_CONF" <<EOF
+tmp=$(mktemp "$WG_CONF.tmp.XXXXXX")
+cp -a "$WG_CONF" "$tmp"
+cat >> "$tmp" <<EOF
 
 # peer: $name
 [Peer]
 PublicKey = $pub
 AllowedIPs = $ip/32
 EOF
-chmod 600 "$WG_CONF"
-wg set "$WG_IF" peer "$pub" allowed-ips "$ip/32"
+chmod 600 "$tmp"
+if ! wg set "$WG_IF" peer "$pub" allowed-ips "$ip/32"; then rm -f "$tmp"; fail "runtime peer update failed"; fi
+if ! mv -f "$tmp" "$WG_CONF"; then wg set "$WG_IF" peer "$pub" remove || true; fail "persistent config update failed"; fi
 printf 'added %s %s\n' "$name" "$ip"

@@ -46,12 +46,14 @@ class WireGuardEnrollmentTests(unittest.TestCase):
         token = created.get_json()['token']
         pub = base64.b64encode(b'x' * 32).decode()
         fake = type('R', (), {'returncode': 0})()
-        with patch('subprocess.run', return_value=fake) as run:
+        with patch('socket.socket') as sock_cls:
+            sock = sock_cls.return_value
+            sock.recv.return_value = b'{"success":true}'
             first = self.client.post('/api/wireguard/enrollment/claim', json={'token': token, 'public_key': pub})
             second = self.client.post('/api/wireguard/enrollment/claim', json={'token': token, 'public_key': pub})
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 403)
-        self.assertEqual(run.call_count, 1)
+        self.assertEqual(sock.sendall.call_count, 1)
 
     def test_public_key_shape_is_exact_wireguard_shape(self):
         value = base64.b64encode(b'x' * 32).decode()

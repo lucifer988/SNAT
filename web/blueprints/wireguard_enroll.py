@@ -40,7 +40,7 @@ def create_enrollment():
     try:
         name = str(data.get('name', '')).strip()
         ip = ipaddress.ip_address(str(data.get('agent_ip', '')).strip())
-        if not name or len(name) > 64 or not all(c.isalnum() or c in '._-' for c in name):
+        if not name or len(name) > 64 or not __import__('re').fullmatch(r'[A-Za-z0-9._-]{1,64}', name):
             raise ValueError
         hub = _read_hub()
         if not hub or ip.version != 4 or ip not in hub.network or ip == hub.ip:
@@ -74,8 +74,12 @@ def claim_enrollment():
         conn.close(); return jsonify({'success': False, 'error': '注册码已被使用'}), 403
     conn.commit()
     try:
-        import subprocess
-        subprocess.run(['sudo', '/usr/local/sbin/snat-wg-peer', 'add', row['name'], pub, row['agent_ip']], check=True, capture_output=True, text=True, timeout=10)
+        import json, socket
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(15); sock.connect('/run/snat-wg-peer.sock')
+        sock.sendall((json.dumps({'op':'add','name':row['name'],'public_key':pub,'agent_ip':row['agent_ip']}, separators=(',', ':'))+'\n').encode())
+        result = json.loads(sock.recv(4096).decode()); sock.close()
+        if not result.get('success'): raise RuntimeError(result.get('error', 'peer helper failed'))
     except Exception:
         conn.execute('UPDATE wg_enrollment_tokens SET used_at=NULL WHERE token=? AND used_at=?', (token, now))
         conn.commit()
