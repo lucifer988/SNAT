@@ -431,11 +431,12 @@
             text-overflow: clip;
             overflow-wrap: anywhere;
         }
-        #serversTable th:nth-child(1), #serversTable td:nth-child(1) { min-width: 150px; }
-        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 180px; }
-        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 90px; }
-        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 110px; }
-        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 230px; }
+        #serversTable th:nth-child(1), #serversTable td:nth-child(1) { min-width: 72px; }
+        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 120px; }
+        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 132px; }
+        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 72px; }
+        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 88px; }
+        #serversTable th:nth-child(6), #serversTable td:nth-child(6) { min-width: 168px; }
         #serversTable .action-group {
             justify-content: center;
             flex-wrap: nowrap;
@@ -699,7 +700,8 @@
             button:active::after { width: 200px; height: 200px; }
             
             /* 表格横向滚动提示 */
-            .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .table-wrap { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; touch-action: pan-x; width: 100%; max-width: 100%; }
+        .table-wrap > table { margin-top: 0; }
             
             /* 空状态优化 */
             .empty-state {
