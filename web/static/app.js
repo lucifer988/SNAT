@@ -183,6 +183,7 @@ function renderServers() {
         const label = s.status === 'token_invalid' ? 'token异常' : s.status;
         return `
         <tr>
+            <td data-label="编号">${esc(s.display_id || s.id)}</td>
             <td data-label="名称">${esc(s.name)}</td>
             <td data-label="地址">${esc(s.host)}</td>
             <td data-label="端口">${s.port}</td>

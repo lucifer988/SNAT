@@ -19,7 +19,9 @@ def servers():
     if request.method == 'GET':
         c.execute('SELECT id,name,host,port,status,last_check,created_at FROM servers ORDER BY id DESC')
         server_list=[dict(row) for row in c.fetchall()]
-        for server in server_list: server['token_set']=True
+        for server in server_list:
+            server['token_set']=True
+            server['display_id'] = _app.circled_num(server['id'])
         conn.close()
         return jsonify(server_list)
 

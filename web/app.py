@@ -831,7 +831,12 @@ def before_request():
     # 在此按运行时设置动态刷新该配置：Flask 在响应末尾 save_session 时会读取它决定是否打 Secure，
     # 从而消除"启动时 FORCE_HTTPS=0 → 运行时开启 HTTPS"期间 session cookie 仍走明文的窗口。
     app.config['SESSION_COOKIE_SECURE'] = is_force_https_enabled()
-    if APP_ENV == 'production' and is_force_https_enabled() and not is_secure_request() and request.path != '/healthz':
+    # 生产环境启用 HTTPS 后，浏览器页面访问必须走 HTTPS；
+    # 但同机/内网自动化调用（如 TG bot 复用 Flask test_client 命中的内部 API）没有真实 TLS 终止，
+    # 若这里一刀切拦截会把内部 POST /api/* 也误判成明文请求，出现 “HTTPS required”。
+    # 因此仅对外部网络请求强制 HTTPS，内部 bot 调用继续走已有的 login/CSRF/reauth/audit 边界。
+    internal_bot_call = bool(request.environ.get('snat.internal_bot_call'))
+    if APP_ENV == 'production' and is_force_https_enabled() and not is_secure_request() and request.path != '/healthz' and not internal_bot_call:
         return jsonify({'error': 'HTTPS required'}), 403
     # 静态文件放行（登录页的 GET 也走静态样式）
     if request.path.startswith('/static/'):
