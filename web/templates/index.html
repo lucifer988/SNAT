@@ -364,7 +364,8 @@
             
             /* padding-bottom 为底部栏留空间 */
             .container {
-                padding-bottom: calc(70px + env(safe-area-inset-bottom, 0));
+                /* 5 个底部快捷按钮在窄屏上会形成更高的固定栏；留足余量，避免最后一屏内容被遮住。 */
+                padding-bottom: calc(104px + env(safe-area-inset-bottom, 0));
             }
             
             /* 导入导出区域按钮也重排 */
@@ -752,16 +753,88 @@
         .tree-rule { padding: 12px; margin-bottom: 8px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border-left: 4px solid #667eea; transition: box-shadow 0.2s, transform 0.15s; }
         .tree-rule:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); transform: translateX(2px); }
         .tree-rule:last-child { margin-bottom: 0; }
-        .tree-rule-main { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-top: 4px; }
+        .tree-rule-main { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-top: 4px; flex-wrap: wrap; }
+        .tree-rule-id {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 52px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(59,130,246,.14);
+            border: 1px solid rgba(59,130,246,.28);
+            color: #38bdf8;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: .2px;
+            flex: 0 0 auto;
+        }
         .tree-rule-port { color: #667eea; font-size: 16px; font-weight: 700; }
         .tree-rule-arrow { color: #999; }
-        .tree-rule-target { color: #333; flex: 1; }
-        .tree-rule-status { padding: 2px 8px; border-radius: 8px; font-size: 12px; }
-        .tree-rule-status.enabled { background: #d1fae5; color: #059669; }
-        .tree-rule-status.disabled { background: #fee2e2; color: #dc2626; }
+        .tree-rule-target { color: #333; flex: 1; min-width: 180px; }
+        .tree-rule-status-group {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-left: auto;
+            justify-content: flex-end;
+        }
+        .tree-rule-status {
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            border: 1px solid transparent;
+        }
+        .tree-rule-status.enabled { background: rgba(16,185,129,.14); color: #059669; border-color: rgba(16,185,129,.22); }
+        .tree-rule-status.disabled { background: rgba(148,163,184,.16); color: #475569; border-color: rgba(148,163,184,.22); }
+        .tree-rule-status.synced { background: rgba(59,130,246,.12); color: #2563eb; border-color: rgba(59,130,246,.22); }
+        .tree-rule-status.warning { background: rgba(245,158,11,.16); color: #b45309; border-color: rgba(245,158,11,.24); }
+        .tree-rule-status.danger { background: rgba(239,68,68,.14); color: #dc2626; border-color: rgba(239,68,68,.22); }
+        .tree-rule-status.muted { background: rgba(226,232,240,.7); color: #64748b; border-color: rgba(203,213,225,.9); }
+        .tree-rule-status-text { font-weight: 700; color: #334155; }
         .tree-rule-info { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: #666; }
         .tree-rule-info .conn-high { color: #f59e0b; font-weight: 600; }
         .tree-rule-info .conn-full { color: #ef4444; font-weight: 700; }
+        .reconcile-result {
+            display: grid;
+            gap: 8px;
+            margin: 12px 0 10px;
+        }
+        .reconcile-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(148,163,184,.18);
+            background: rgba(255,255,255,.74);
+            color: #334155;
+        }
+        .reconcile-item.ok { border-color: rgba(16,185,129,.24); background: rgba(236,253,245,.9); }
+        .reconcile-item.warning { border-color: rgba(245,158,11,.28); background: rgba(255,251,235,.92); }
+        .reconcile-item.error { border-color: rgba(239,68,68,.24); background: rgba(254,242,242,.92); }
+        .reconcile-item.muted { border-color: rgba(148,163,184,.18); background: rgba(248,250,252,.9); }
+        .reconcile-rule-id {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 48px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(59,130,246,.12);
+            color: #2563eb;
+            font-size: 12px;
+            font-weight: 800;
+            flex: 0 0 auto;
+        }
+        .reconcile-status {
+            font-size: 13px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
         .tree-rule-traffic-bar { height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 6px; overflow: hidden; }
         .tree-rule-traffic-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
         .tree-rule-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; }
@@ -947,7 +1020,15 @@
         }
         tbody tr:hover td { background: rgba(255,255,255,0.88); }
         tbody tr:last-child td { border-bottom: none; }
-        .table-wrap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: rgba(255,255,255,.35); }
+        .table-wrap {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-x;
+            background: rgba(255,255,255,.35);
+        }
 
         /* 状态标记 */
         .status-online { color: var(--success) !important; font-weight: 700; }
@@ -1106,6 +1187,37 @@
             #rulesList { display: block; }
             .mobile-bottom-bar { display: flex; }
             .tree-server-rules.expanded { display: block; }
+            .tree-rule-main {
+                align-items: flex-start;
+                gap: 8px 6px;
+            }
+            .tree-rule-target {
+                min-width: 0;
+                flex: 1 1 100%;
+                order: 2;
+            }
+            .tree-rule-status-group {
+                width: 100%;
+                margin-left: 0;
+                justify-content: flex-start;
+                order: 3;
+            }
+            .tree-rule-info {
+                gap: 8px;
+            }
+            .tree-rule-info > span {
+                flex: 1 1 100%;
+            }
+            .reconcile-item {
+                padding: 10px;
+                gap: 8px;
+            }
+            .reconcile-rule-id {
+                min-width: 44px;
+            }
+            .reconcile-status {
+                font-size: 12px;
+            }
             .tree-rule-actions { display: flex; position: relative; z-index: 2; }
             .tree-rule-actions button {
                 display: inline-flex;
@@ -1185,6 +1297,7 @@
                 <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><input type="checkbox" data-change="toggleAllRules" style="width:16px;height:16px;"> 全选</label>
             </div>
             <div id="bulkBar" style="display:none;margin:10px 0;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">已选择 <strong id="selectedCount">0</strong> 条规则 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button> <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button> <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button></div>
+            <div id="reconcileResult" class="reconcile-result" aria-live="polite"></div>
             <!-- 树形规则列表 -->
             <div id="rulesTree"></div>
         </div>

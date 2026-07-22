@@ -271,22 +271,41 @@ function renderTreeRule(r, idx) {
     const targetDisplay = (r.target_host && r.target_host !== r.target_ip) ? `${r.target_host} (${r.target_ip})` : r.target_ip;
     const connCount = r.active_connections ?? 0;
     const connClass = connCount >= 50 ? 'conn-full' : connCount >= 20 ? 'conn-high' : '';
+    const overLimit = limitGB > 0 && Number(r.traffic_used_bytes || 0) >= limitGB * 1024 ** 3;
 
     const BORDER_COLORS = ['#667eea','#f59e0b','#10b981','#ec4899','#3b82f6','#8b5cf6','#ef4444','#06b6d4'];
     const borderColor = BORDER_COLORS[idx % BORDER_COLORS.length];
 
+    const statusBadges = [];
+    statusBadges.push(`<span class="tree-rule-status ${r.enabled ? 'enabled' : 'disabled'}">${r.enabled ? '启用中' : '已停用'}</span>`);
+    if (r.status === 'desynced') statusBadges.push('<span class="tree-rule-status warning">待补下发</span>');
+    else if (r.status === 'unknown') statusBadges.push('<span class="tree-rule-status danger">远端未知</span>');
+    else if (overLimit && !r.enabled) statusBadges.push('<span class="tree-rule-status warning">超限停用</span>');
+    else if (r.enabled) statusBadges.push('<span class="tree-rule-status synced">已下发</span>');
+    else statusBadges.push('<span class="tree-rule-status muted">本地停用</span>');
+
+    const statusSummary = r.status === 'desynced'
+        ? '待补下发'
+        : r.status === 'unknown'
+            ? '远端状态未知'
+            : overLimit && !r.enabled
+                ? '超限后已停用'
+                : r.enabled
+                    ? 'Agent 已下发'
+                    : '本地已停用';
+
     return `
         <div class="tree-rule" style="border-left-color:${borderColor}">
             <div class="tree-rule-main">
+                <span class="tree-rule-id" title="TGBOT 删除命令使用的规则序号">#${r.id}</span>
                 <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" style="width:16px;height:16px;">
                 <span class="tree-rule-port">${r.local_port}</span>
                 <span class="tree-rule-arrow">→</span>
                 <span class="tree-rule-target">${esc(targetDisplay)}:${r.target_port}</span>
-                <span class="tree-rule-status ${r.enabled ? 'enabled' : 'disabled'}">${r.enabled ? '启用' : '禁用'}</span>
-                ${r.status === 'desynced' ? '<span class="tree-rule-status disabled">⚠ 待对账</span>' : ''}
-                ${r.status === 'unknown' ? '<span class="tree-rule-status disabled">⚠ 远端状态未知</span>' : ''}
+                <span class="tree-rule-status-group">${statusBadges.join('')}</span>
             </div>
             <div class="tree-rule-info">
+                <span>状态: <span class="tree-rule-status-text">${statusSummary}</span></span>
                 <span>流量: ${traffic.summaryText}</span>
                 <span>连接: <span class="${connClass}">${connCount}</span></span>
                 ${r.created_at ? `<span>创建: ${esc(formatCreatedAt(r.created_at))}</span>` : ''}
@@ -1018,8 +1037,33 @@ function updateBulkBar() {
 async function reconcileRules() {
     const resp = await postWithCsrf('/api/rules/reconcile', {});
     const data = await resp.json();
-    if (data.success) showSuccess(`一致性检查完成：${data.results.length} 条`);
-    else showError(data.error || '检查失败');
+    const el = document.getElementById('reconcileResult');
+    if (!data.success) {
+        if (el) el.innerHTML = `<div class="reconcile-item error">❌ ${esc(data.error || '检查失败')}</div>`;
+        showError(data.error || '检查失败');
+        return;
+    }
+
+    const statusMeta = {
+        ok: {icon: '✅', label: '已下发', className: 'ok'},
+        reapplied: {icon: '🛠️', label: '远端缺失，已补下发', className: 'warning'},
+        failed: {icon: '❌', label: '补下发失败', className: 'error'},
+        error: {icon: '❌', label: '检查异常', className: 'error'},
+        remote_suspended: {icon: '⛔', label: '远端已挂起，已同步停用', className: 'warning'},
+        over_limit_skipped: {icon: '⚠️', label: '超限规则，未重新下发', className: 'warning'},
+    };
+
+    if (el) {
+        el.innerHTML = (data.results || []).map(item => {
+            const meta = statusMeta[item.status] || {icon: 'ℹ️', label: item.status || '未知状态', className: 'muted'};
+            const extra = item.error ? `：${esc(item.error)}` : item.http ? `：HTTP ${item.http}` : '';
+            return `<div class="reconcile-item ${meta.className}"><span class="reconcile-rule-id">#${item.rule_id ?? '?'}</span><span class="reconcile-status">${meta.icon} ${meta.label}${extra}</span></div>`;
+        }).join('') || '<div class="reconcile-item muted">暂无检查结果</div>';
+    }
+
+    const repaired = (data.results || []).filter(x => x.status === 'reapplied').length;
+    const failed = (data.results || []).filter(x => x.status === 'failed' || x.status === 'error').length;
+    showSuccess(`一致性检查完成：共 ${data.results.length} 条，补下发 ${repaired} 条，异常 ${failed} 条`);
 }
 
 async function reapplyRules() {
