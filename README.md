@@ -200,6 +200,31 @@ sudo systemctl restart snat-agent
 
 # 流量限额
 
+## 本地 UI 验收 / 假 Agent
+
+如需在没有真实 Agent / iptables 环境的情况下验证 Web UI、规则下发链路和拖拽排序，可在仓库根目录启动一个最小假 Agent：
+
+```bash
+python3 fake_agent.py
+```
+
+默认监听 `127.0.0.1:8888`，接受这些本地验收所需接口：
+- `/health`
+- `/add_rule`
+- `/delete_rule`
+- `/list_rules`
+- `/get_traffic/<port>`
+- `/get_connections/<port>`
+- `/check_traffic_limit`
+
+用途：
+- 本地验证 Web 管理端新增规则是否成功落库 / 下发
+- 验证服务器列表与规则列表在 UI 中的真实渲染与拖拽行为
+
+说明：
+- 这是开发 / 验收工具，不替代真实 SNAT Agent
+- 默认 token 为 `token-qa`，可通过 `AGENT_TOKEN` 覆盖
+
 规则可配置 `traffic_limit_gb`。限额会随规则下发到 Agent，由 Agent 本地周期检查：
 
 - 即使 Web 面板离线，限额仍会执行
