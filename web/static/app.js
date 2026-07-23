@@ -201,41 +201,203 @@ function renderServers() {
     setupServerSorting();
 }
 
-// 通用纵向拖动排序：仅拖动专用把手，避免与按钮、横向表格滑动和页面滚动冲突。
+// 通用纵向拖动排序：支持把手拖动，也支持按住卡片/行的空白区域直接拖动。
 function setupPointerSorting(container, itemSelector, handleSelector, onPersist) {
     if (!container || container.dataset.sortReady === '1') return;
     container.dataset.sortReady = '1';
     let active = null;
+    const isTouchLikeDevice = window.matchMedia('(max-width: 768px)').matches || navigator.maxTouchPoints > 0;
+
+    const INTERACTIVE_SELECTOR = [
+        'button', 'a', 'input', 'select', 'textarea', 'label',
+        '[data-act]', '[data-change]', '[data-input]', '[data-submit]',
+        '.tree-rule-actions', '.action-group', '.close'
+    ].join(', ');
+
+    const isInteractiveTarget = (target, item) => {
+        if (!target || !item) return false;
+        return !!target.closest(INTERACTIVE_SELECTOR) && !target.closest(handleSelector)?.closest(itemSelector)?.isSameNode(item);
+    };
+
+    const siblingsFor = (state) => [...state.parent.querySelectorAll(`:scope > ${itemSelector}`)].filter(node => node !== state.item && node !== state.placeholder);
+
+    const clearLiftOffsets = (state) => {
+        if (!state?.liftedItems?.length) return;
+        state.liftedItems.forEach(node => {
+            node.style.removeProperty('--sort-shift-y');
+            node.style.removeProperty('--sort-shift-scale');
+            node.classList.remove('sort-shift-up', 'sort-shift-down', 'sort-lifted');
+        });
+        state.liftedItems = [];
+    };
+
+    const setActive = (state) => {
+        if (!state && active) clearLiftOffsets(active);
+        active = state;
+        container.classList.toggle('drag-sorting', !!state);
+        document.body.classList.toggle('dragging-sort-item', !!state);
+    };
+
+    const clearDragArtifacts = (state) => {
+        if (state?.ghost?.parentNode) state.ghost.parentNode.removeChild(state.ghost);
+        if (state?.placeholder?.parentNode) state.placeholder.parentNode.removeChild(state.placeholder);
+    };
+
+    const syncGhost = (state, clientX, clientY) => {
+        if (!state?.ghost) return;
+        const x = clientX - state.offsetX;
+        const fingerLift = state.touchLike ? Math.min(state.itemRect.height * 0.34, 54) : 0;
+        const y = clientY - state.offsetY - fingerLift;
+        const snapOffset = state.snapOffsetY || 0;
+        const scaleBoost = state.snapStrength ? (state.scale + state.snapStrength * (state.touchLike ? 0.04 : 0.025)) : state.scale;
+        state.ghost.style.transform = `translate3d(${x}px, ${y + snapOffset}px, 0) rotate(${state.rotation}deg) scale(${scaleBoost})`;
+    };
+
+    const resolveTarget = (state, clientX, clientY) => {
+        if (!state) return null;
+        const direct = document.elementFromPoint(clientX, clientY)?.closest(itemSelector);
+        if (direct && direct !== state.item && direct.parentElement === state.parent) return direct;
+        return siblingsFor(state).find(node => {
+            const rect = node.getBoundingClientRect();
+            return clientY >= rect.top && clientY <= rect.bottom;
+        }) || null;
+    };
+
+    const animateReflow = (state) => {
+        if (!state?.placeholder) return;
+        const placeholderRect = state.placeholder.getBoundingClientRect();
+        const siblings = siblingsFor(state);
+        clearLiftOffsets(state);
+        state.liftedItems = siblings;
+        siblings.forEach(node => {
+            const rect = node.getBoundingClientRect();
+            const goingDown = rect.top >= placeholderRect.top;
+            const distanceFactor = Math.min(Math.abs(rect.top - placeholderRect.top) / Math.max(state.itemRect.height, 1), 1.8);
+            const shift = goingDown ? state.itemRect.height * (0.18 + distanceFactor * 0.06) : -state.itemRect.height * (0.18 + distanceFactor * 0.06);
+            const scale = goingDown ? (0.992 - distanceFactor * 0.01) : (0.994 - distanceFactor * 0.008);
+            node.style.setProperty('--sort-shift-y', `${shift}px`);
+            node.style.setProperty('--sort-shift-scale', `${Math.max(scale, 0.972)}`);
+            node.classList.add('sort-lifted', goingDown ? 'sort-shift-down' : 'sort-shift-up');
+        });
+        const placeholderCenter = placeholderRect.top + placeholderRect.height / 2;
+        const itemCenter = (state.lastClientY ?? state.startY) - state.offsetY + state.itemRect.height / 2;
+        const normalizedDelta = (placeholderCenter - itemCenter) / Math.max(state.itemRect.height, 1);
+        const snapLimit = state.touchLike ? 16 : 10;
+        const snapPull = state.touchLike ? 14 : 10;
+        const snapFalloff = state.touchLike ? 1.8 : 1.4;
+        state.snapOffsetY = Math.max(Math.min(normalizedDelta * snapPull, snapLimit), -snapLimit);
+        state.snapStrength = Math.max(0, 1 - Math.min(Math.abs(normalizedDelta), snapFalloff) / snapFalloff);
+        state.placeholder.style.setProperty('--placeholder-pop', `${1 + state.snapStrength * (state.touchLike ? 0.055 : 0.035)}`);
+    };
+
+    const buildPlaceholder = (state) => {
+        const placeholder = document.createElement(state.item.tagName === 'TR' ? 'tr' : 'div');
+        placeholder.className = `${state.item.className} sorting-placeholder`;
+        placeholder.style.height = `${state.itemRect.height}px`;
+        placeholder.style.width = `${state.itemRect.width}px`;
+        if (state.item.tagName === 'TR') {
+            const colSpan = state.item.children.length || 1;
+            placeholder.innerHTML = `<td colspan="${colSpan}"></td>`;
+        }
+        return placeholder;
+    };
+
+    const buildGhost = (state) => {
+        const ghost = state.item.cloneNode(true);
+        ghost.classList.remove('sorting-pending');
+        ghost.classList.add('sorting-ghost');
+        ghost.style.width = `${state.itemRect.width}px`;
+        ghost.style.height = `${state.itemRect.height}px`;
+        if (state.item.tagName === 'TR') ghost.style.display = 'table';
+        document.body.appendChild(ghost);
+        return ghost;
+    };
 
     container.addEventListener('pointerdown', (event) => {
-        if (container.classList.contains('sorting-disabled')) return;
+        if (container.classList.contains('sorting-disabled') || active) return;
+        const item = event.target.closest(itemSelector);
+        if (!item || item.parentElement !== container && item.parentElement !== item.closest('.tree-server-rules')) return;
+        if (event.button !== undefined && event.button > 0) return;
+
         const handle = event.target.closest(handleSelector);
-        const item = handle?.closest(itemSelector);
-        if (!handle || !item || event.button > 0) return;
-        active = {item, pointerId: event.pointerId, startY: event.clientY, moved: false};
-        handle.setPointerCapture?.(event.pointerId);
+        const allowWholeItemDrag = item.matches('.sortable-rule') || item.matches('.sortable-server-row');
+        if (!handle && !allowWholeItemDrag) return;
+        if (!handle && isInteractiveTarget(event.target, item)) return;
+
+        const rect = item.getBoundingClientRect();
+        const usingHandle = !!handle;
+        const pointerOwner = handle || item;
+        setActive({
+            item,
+            handle: pointerOwner,
+            parent: item.parentElement,
+            pointerId: event.pointerId,
+            startY: event.clientY,
+            startX: event.clientX,
+            moved: false,
+            itemRect: rect,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            ghost: null,
+            placeholder: null,
+            liftedItems: [],
+            snapOffsetY: 0,
+            snapStrength: 0,
+            lastClientY: event.clientY,
+            touchLike: isTouchLikeDevice,
+            scale: usingHandle ? (isTouchLikeDevice ? 1.03 : 1.015) : (isTouchLikeDevice ? 1.025 : 1.01),
+            rotation: item.matches('.sortable-rule') ? (isTouchLikeDevice ? 0 : (event.clientX % 2 === 0 ? -1.2 : 1.2)) : 0
+        });
+        pointerOwner.setPointerCapture?.(event.pointerId);
         item.classList.add('sorting-pending');
+        if (!usingHandle) item.classList.add('drag-surface-active');
     });
 
     container.addEventListener('pointermove', (event) => {
-        if (!active || event.pointerId !== active.pointerId) return;
-        if (!active.moved && Math.abs(event.clientY - active.startY) < 8) return;
-        active.moved = true;
-        active.item.classList.remove('sorting-pending');
-        active.item.classList.add('sorting-active');
+        const state = active;
+        if (!state || event.pointerId !== state.pointerId) return;
+        state.lastClientY = event.clientY;
+        const deltaY = event.clientY - state.startY;
+        const deltaX = event.clientX - state.startX;
+        if (!state.moved && Math.hypot(deltaX, deltaY) < 8) return;
+        if (!state.moved) {
+            state.moved = true;
+            state.placeholder = buildPlaceholder(state);
+            state.parent.insertBefore(state.placeholder, state.item.nextSibling);
+            state.ghost = buildGhost(state);
+            state.item.classList.remove('sorting-pending');
+            state.item.classList.add('sorting-active');
+            state.item.style.visibility = 'hidden';
+            animateReflow(state);
+        }
         event.preventDefault();
-        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(itemSelector);
-        if (!target || target === active.item || target.parentElement !== active.item.parentElement) return;
-        const box = target.getBoundingClientRect();
-        target.parentElement.insertBefore(active.item, event.clientY < box.top + box.height / 2 ? target : target.nextSibling);
+        const target = resolveTarget(state, event.clientX, event.clientY);
+        if (target && target !== state.placeholder && target.parentElement === state.parent) {
+            const box = target.getBoundingClientRect();
+            state.parent.insertBefore(state.placeholder, event.clientY < box.top + box.height / 2 ? target : target.nextSibling);
+        }
+        animateReflow(state);
+        syncGhost(state, event.clientX, event.clientY);
     });
 
     const finish = async (event, cancelled = false) => {
-        if (!active || event.pointerId !== active.pointerId) return;
         const state = active;
-        active = null;
-        state.item.classList.remove('sorting-pending', 'sorting-active');
-        if (!cancelled && state.moved) await onPersist(state.item.parentElement);
+        if (!state || event.pointerId !== state.pointerId) return;
+        setActive(null);
+        state.item.classList.remove('sorting-pending', 'sorting-active', 'drag-surface-active');
+        state.item.style.visibility = '';
+        if (state.placeholder?.parentNode) {
+            state.placeholder.style.setProperty('--placeholder-pop', '1.06');
+            state.parent.insertBefore(state.item, state.placeholder);
+        }
+        if (state.ghost) {
+            state.ghost.style.transition = 'transform .16s cubic-bezier(.22,.61,.36,1), opacity .14s ease, box-shadow .18s ease';
+            state.ghost.style.opacity = '.72';
+            state.ghost.style.transform = `translate3d(${state.item.getBoundingClientRect().left}px, ${state.item.getBoundingClientRect().top}px, 0) rotate(${state.rotation * 0.4}deg) scale(.985)`;
+        }
+        await new Promise(resolve => setTimeout(resolve, 120));
+        clearDragArtifacts(state);
+        if (!cancelled && state.moved) await onPersist(state.parent);
     };
     container.addEventListener('pointerup', event => finish(event));
     container.addEventListener('pointercancel', event => finish(event, true));
@@ -497,6 +659,12 @@ function closeModal(id) {
         if (btn) btn.textContent = '自动刷新';
     }
 }
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const openModal = [...document.querySelectorAll('.modal')].find(m => m.style.display === 'block');
+    if (openModal?.id) closeModal(openModal.id);
+});
 
 let autoLogsTimer = null;
 

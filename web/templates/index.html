@@ -841,18 +841,23 @@
             font-size: 12px;
             line-height: 1.5;
             text-align: center;
+            padding: 8px 12px;
+            border-radius: 12px;
+            background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(239,246,255,.56));
+            border: 1px solid rgba(59,130,246,.10);
         }
         .drag-handle {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 32px;
-            height: 32px;
-            margin-right: 6px;
-            border-radius: 9px;
-            color: #64748b;
-            background: rgba(148,163,184,.12);
-            border: 1px solid rgba(148,163,184,.18);
+            width: 34px;
+            height: 34px;
+            margin-right: 8px;
+            border-radius: 12px;
+            color: #334155;
+            background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(236,244,255,.9));
+            border: 1px solid rgba(96,165,250,.32);
+            box-shadow: 0 10px 22px rgba(59,130,246,.16), inset 0 1px 0 rgba(255,255,255,.95);
             cursor: grab;
             user-select: none;
             -webkit-user-select: none;
@@ -860,16 +865,137 @@
             flex: 0 0 auto;
             font-size: 18px;
             line-height: 1;
+            transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease, color .18s ease;
         }
-        .drag-handle:active { cursor: grabbing; }
-        .sorting-pending { transition: none !important; }
+        .drag-handle:hover {
+            transform: translateY(-1px) scale(1.03);
+            color: #1d4ed8;
+            border-color: rgba(59,130,246,.5);
+            box-shadow: 0 14px 28px rgba(59,130,246,.24), inset 0 1px 0 rgba(255,255,255,.98);
+        }
+        .drag-handle:active { cursor: grabbing; transform: scale(.94); }
+        .sortable-rule,
+        .sortable-server-row {
+            transition: transform .18s cubic-bezier(.22,.61,.36,1), box-shadow .18s ease, opacity .18s ease, filter .18s ease, background .18s ease;
+            will-change: transform;
+        }
+        .sortable-rule:hover,
+        .sortable-rule.drag-surface-active {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 26px rgba(59,130,246,.12);
+        }
+        #serversTable tbody .sortable-server-row:hover td {
+            box-shadow: 0 14px 26px rgba(59,130,246,.12);
+        }
+        .sortable-rule.drag-surface-active,
+        .sortable-server-row.drag-surface-active {
+            box-shadow: 0 0 0 2px rgba(59,130,246,.18), 0 18px 32px rgba(59,130,246,.12);
+        }
+        #serversTable tbody .sortable-server-row.drag-surface-active td {
+            background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(240,249,255,.90));
+        }
+        .sort-lifted {
+            transition: transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s ease, opacity .22s ease, filter .22s ease !important;
+            opacity: .9;
+            filter: saturate(.94);
+        }
+            transform: translateY(var(--sort-shift-y, -10px)) scale(var(--sort-shift-scale, .992));
+            box-shadow: 0 12px 24px rgba(59,130,246,.12);
+            opacity: .88;
+        }
+        .sort-shift-down {
+            transform: translateY(var(--sort-shift-y, 10px)) scale(var(--sort-shift-scale, .992));
+            box-shadow: 0 12px 24px rgba(59,130,246,.12);
+            opacity: .92;
+        }
+        #serversTable tbody .sortable-server-row:hover td,
+        #serversTable tbody .sortable-server-row.drag-surface-active td {
+            background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(240,249,255,.88));
+        }
+        .sorting-pending {
+            transition: none !important;
+            box-shadow: 0 0 0 2px rgba(59,130,246,.16);
+        }
         .sorting-active {
+            opacity: .14;
+            transform: scale(.982);
+            filter: saturate(.78) blur(.2px);
+        }
+        .sorting-ghost {
+            position: fixed;
+            left: 0;
+            top: 0;
+            margin: 0;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: .995;
+            transform: translate3d(-9999px, -9999px, 0);
+            transform-origin: top left;
+            box-shadow: 0 30px 58px rgba(59,130,246,.28), 0 14px 22px rgba(15,23,42,.16) !important;
+            border: 1px solid rgba(59,130,246,.24);
+            border-radius: 16px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            overflow: hidden;
+            transition: transform .08s linear, box-shadow .18s ease, filter .18s ease;
+            filter: drop-shadow(0 10px 14px rgba(59,130,246,.08));
+        }
+        @media (max-width: 768px) {
+            .sorting-ghost {
+                box-shadow: 0 34px 64px rgba(59,130,246,.30), 0 18px 28px rgba(15,23,42,.18) !important;
+                filter: drop-shadow(0 14px 20px rgba(59,130,246,.14));
+                border-radius: 18px;
+            }
+        }
+        .sorting-ghost .drag-handle {
+            color: #1d4ed8;
+            border-color: rgba(59,130,246,.42);
+            box-shadow: 0 12px 24px rgba(59,130,246,.18), inset 0 1px 0 rgba(255,255,255,.98);
+        }
+        .sorting-placeholder {
             position: relative;
-            z-index: 20;
-            opacity: .82;
-            transform: scale(.99);
-            box-shadow: 0 12px 30px rgba(59,130,246,.24) !important;
-            outline: 2px solid rgba(59,130,246,.35);
+            border: 2px dashed rgba(59,130,246,.5) !important;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(59,130,246,.12), rgba(14,165,233,.07)) !important;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.62), 0 0 0 1px rgba(59,130,246,.06);
+            animation: sortingPlaceholderPulse 1.15s ease-in-out infinite;
+            transition: transform .22s cubic-bezier(.22,.61,.36,1), height .18s ease, margin .18s ease;
+            transform: scale(var(--placeholder-pop, 1));
+        }
+        .sorting-placeholder::after {
+            content: '拖到这里';
+            position: absolute;
+            inset: 50% auto auto 50%;
+            transform: translate(-50%, -50%);
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(255,255,255,.92);
+            color: #2563eb;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .04em;
+            box-shadow: 0 8px 20px rgba(59,130,246,.14);
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .sorting-placeholder > td {
+            padding: 0 !important;
+            height: inherit;
+            min-height: 56px;
+            background: transparent !important;
+            border-bottom: none !important;
+        }
+        .tree-rule.sorting-placeholder {
+            min-height: 132px;
+        }
+        .tree-server-rules.drag-sorting,
+        #serversTable tbody.drag-sorting,
+        body.dragging-sort-item {
+            cursor: grabbing;
+        }
+        @keyframes sortingPlaceholderPulse {
+            0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.62), 0 0 0 1px rgba(59,130,246,.06), 0 10px 24px rgba(59,130,246,.08); }
+            50% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.82), 0 0 0 1px rgba(59,130,246,.14), 0 14px 32px rgba(59,130,246,.16); }
         }
         .sorting-disabled .rule-drag-handle {
             opacity: .28;
@@ -1091,8 +1217,26 @@
         }
         .modal-header { border-bottom: 1px solid var(--border); }
         .modal-header h2 { color: var(--text); border-left: none; padding-left: 0; }
-        .close { color: var(--muted); }
-        .close:hover { color: var(--text); }
+        .close {
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border: 1px solid rgba(255,255,255,.12);
+            border-radius: 12px;
+            background: rgba(255,255,255,.08);
+            cursor: pointer;
+            font-size: 24px;
+            line-height: 1;
+            transition: transform .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+        .close:hover { color: var(--text); background: rgba(255,255,255,.16); transform: scale(1.03); }
+        .close:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(56,189,248,.32);
+        }
 
         /* 树形服务器/规则列表 */
         .tree-server { border: 1px solid rgba(255,255,255,.06); box-shadow: 0 10px 24px rgba(0,0,0,.22); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.02); }
@@ -1236,13 +1380,17 @@
                 gap: 8px 6px;
             }
             .drag-handle {
-                width: 40px;
-                height: 40px;
-                margin-right: 2px;
+                width: 44px;
+                height: 44px;
+                margin-right: 4px;
             }
             .server-drag-handle {
-                width: 36px;
-                height: 36px;
+                width: 40px;
+                height: 40px;
+            }
+            .sortable-rule,
+            .sortable-server-row {
+                touch-action: none;
             }
             .tree-rule-target {
                 min-width: 0;
@@ -1309,7 +1457,7 @@
         
         <div class="section">
             <h2>服务器列表</h2>
-            <div class="sort-hint">按住左侧 ☰ 上下拖动，可调整服务器显示顺序。</div>
+            <div class="sort-hint">按住 ☰ 或卡片空白区域即可拖动；手机上会自动抬高手指下方卡片，减少遮挡。</div>
             <div style="text-align:center; margin-bottom: 10px;">
                 <button class="btn-primary" data-act="showAddServerModal">+ 添加服务器</button>
             </div>
@@ -1330,7 +1478,7 @@
 
         <div class="section" id="rulesSection">
             <h2>转发规则 <span id="connectionsSummaryText" style="margin-left:12px;font-size:14px;color:#374151;">总活跃连接：0</span></h2>
-            <div class="sort-hint">选择“手动排序”后，按住规则左侧 ☰ 上下拖动；仅改变显示位置，不改变 TGBOT 使用的规则编号。</div>
+            <div class="sort-hint">手动排序时，按住 ☰ 或卡片空白区域即可拖动；仅改变显示顺序，不改变 TGBOT 规则编号。</div>
             <div style="text-align:center; margin-bottom: 10px;">
                 <button class="btn-success" data-act="showAddRuleModal">+ 添加规则</button>
                 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button>
@@ -1426,7 +1574,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>添加服务器</h2>
-                <span class="close" data-act="closeModal" data-arg="addServerModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="addServerModal" aria-label="关闭添加服务器弹窗">&times;</button>
             </div>
             <div class="form-group">
                 <label>服务器名称</label>
@@ -1453,7 +1601,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>添加转发规则</h2>
-                <span class="close" data-act="closeModal" data-arg="addRuleModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="addRuleModal" aria-label="关闭添加规则弹窗">&times;</button>
             </div>
             <div class="form-group">
                 <label>选择服务器</label>
@@ -1488,7 +1636,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>编辑转发规则</h2>
-                <span class="close" data-act="closeModal" data-arg="editRuleModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="editRuleModal" aria-label="关闭编辑规则弹窗">&times;</button>
             </div>
             <input type="hidden" id="editRuleId">
             <div class="form-group">
@@ -1524,7 +1672,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>修改密码</h2>
-                <span class="close" data-act="closeModal" data-arg="changePasswordModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="changePasswordModal" aria-label="关闭修改密码弹窗">&times;</button>
             </div>
             <div class="form-group">
                 <label>原密码</label>
@@ -1547,7 +1695,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>系统设置</h2>
-                <span class="close" data-act="closeModal" data-arg="settingsModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="settingsModal" aria-label="关闭系统设置弹窗">&times;</button>
             </div>
             <div class="form-group">
                 <label><input type="checkbox" id="forceHttps" style="width:auto;margin-right:8px"> 强制 HTTPS</label>
@@ -1567,7 +1715,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>🔍 系统诊断</h2>
-                <span class="close" data-act="closeModal" data-arg="diagModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="diagModal" aria-label="关闭系统诊断弹窗">&times;</button>
             </div>
             <div id="diagResults" style="margin-top:20px"></div>
         </div>
@@ -1578,7 +1726,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>📄 系统日志</h2>
-                <span class="close" data-act="closeModal" data-arg="logsModal">&times;</span>
+                <button type="button" class="close" data-act="closeModal" data-arg="logsModal" aria-label="关闭系统日志弹窗">&times;</button>
             </div>
             <div style="display:flex; gap:10px; margin-bottom:12px; justify-content:center;">
                 <button class="btn-primary" data-act="loadLogs">刷新</button>
@@ -1588,8 +1736,8 @@
         </div>
     </div>
 
-    <!-- 主逻辑：此前模板从未引入 app.js，导致仪表盘所有按钮的函数未定义（功能性缺陷），此处补回。 -->
-    <script src="/static/app.js?v=3"></script>
+    <!-- 主逻辑：显式带 nonce，避免在某些严格 CSP / 浏览器自动化环境中被误拦截，确保 data-act 事件委托脚本稳定加载。 -->
+    <script src="/static/app.js?v=3" nonce="{{ csp_nonce }}"></script>
 
     <!-- 移动端键盘检测 & PWA meta -->
     <script nonce="{{ csp_nonce }}">
@@ -1613,23 +1761,26 @@
         createSakura();
 
         // 检测虚拟键盘弹出，隐藏底部栏
-        const meta = document.createElement('meta');
-        meta.name = 'viewport';
         const vp = document.querySelector('meta[name="viewport"]');
         if (vp && !vp.content.includes('viewport-fit=cover')) {
             vp.content = vp.content.replace('width=device-width', 'width=device-width, viewport-fit=cover');
         }
         
-        // iOS 键盘检测
+        // iOS 键盘检测：使用初始可视高度做基线，避免直接拿 window.innerHeight 造成误判
         const visualViewport = window.visualViewport;
         if (visualViewport) {
-            visualViewport.addEventListener('resize', () => {
-                if (visualViewport.height < window.innerHeight - 100) {
-                    document.body.classList.add('keyboard-open');
-                } else {
-                    document.body.classList.remove('keyboard-open');
-                }
+            let baseViewportHeight = Math.max(visualViewport.height, window.innerHeight || 0);
+            const syncKeyboardState = () => {
+                baseViewportHeight = Math.max(baseViewportHeight, visualViewport.height);
+                const keyboardOpen = visualViewport.height < (baseViewportHeight - 120);
+                document.body.classList.toggle('keyboard-open', keyboardOpen);
+            };
+            visualViewport.addEventListener('resize', syncKeyboardState);
+            window.addEventListener('orientationchange', () => {
+                baseViewportHeight = Math.max(visualViewport.height, window.innerHeight || 0);
+                syncKeyboardState();
             });
+            syncKeyboardState();
         }
     })();
     </script>
