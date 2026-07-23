@@ -60,6 +60,62 @@ class SmokeTest(unittest.TestCase):
         r = self.web_client.get('/healthz')
         self.assertEqual(r.status_code, 200)
 
+    def test_server_reorder_persists_without_changing_ids(self):
+        self.login_web()
+        first = self.insert_server(name='first', host='10.0.0.1')
+        second = self.insert_server(name='second', host='10.0.0.2')
+        third = self.insert_server(name='third', host='10.0.0.3')
+        response = self.web_client.post('/api/servers/reorder', json={'server_ids': [second, third, first]}, headers={'X-CSRF-Token': 'test-csrf-token'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        listed = self.web_client.get('/api/servers').get_json()
+        self.assertEqual([item['id'] for item in listed], [second, third, first])
+        self.assertEqual({item['id'] for item in listed}, {first, second, third})
+        webapp.init_db()
+        listed_after_restart = self.web_client.get('/api/servers').get_json()
+        self.assertEqual([item['id'] for item in listed_after_restart], [second, third, first])
+
+    def test_rule_reorder_is_scoped_to_one_server_and_preserves_rule_ids(self):
+        self.login_web()
+        server_id = self.insert_server(name='rules-a', host='10.0.1.1')
+        other_server_id = self.insert_server(name='rules-b', host='10.0.1.2')
+        conn = webapp.sqlite3.connect(webapp.DB_FILE)
+        cursor = conn.cursor()
+        rule_ids = []
+        for port in (10001, 10002, 10003):
+            cursor.execute('INSERT INTO rules (server_id, local_port, target_ip, target_port) VALUES (?, ?, ?, ?)', (server_id, port, '1.1.1.1', 80))
+            rule_ids.append(cursor.lastrowid)
+        cursor.execute('INSERT INTO rules (server_id, local_port, target_ip, target_port) VALUES (?, ?, ?, ?)', (other_server_id, 20001, '2.2.2.2', 443))
+        other_rule_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        response = self.web_client.post('/api/rules/reorder', json={'server_id': server_id, 'rule_ids': [rule_ids[2], rule_ids[0], rule_ids[1]]}, headers={'X-CSRF-Token': 'test-csrf-token'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        listed = self.web_client.get('/api/rules').get_json()
+        scoped = [item['id'] for item in listed if item['server_id'] == server_id]
+        self.assertEqual(scoped, [rule_ids[2], rule_ids[0], rule_ids[1]])
+        self.assertIn(other_rule_id, [item['id'] for item in listed])
+        webapp.init_db()
+        listed_after_restart = self.web_client.get('/api/rules').get_json()
+        scoped_after_restart = [item['id'] for item in listed_after_restart if item['server_id'] == server_id]
+        self.assertEqual(scoped_after_restart, [rule_ids[2], rule_ids[0], rule_ids[1]])
+
+    def test_rule_reorder_rejects_cross_server_ids(self):
+        self.login_web()
+        server_id = self.insert_server(name='scope-a', host='10.0.2.1')
+        other_server_id = self.insert_server(name='scope-b', host='10.0.2.2')
+        conn = webapp.sqlite3.connect(webapp.DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO rules (server_id, local_port, target_ip, target_port) VALUES (?, ?, ?, ?)', (server_id, 30001, '3.3.3.3', 80))
+        own_rule = cursor.lastrowid
+        cursor.execute('INSERT INTO rules (server_id, local_port, target_ip, target_port) VALUES (?, ?, ?, ?)', (other_server_id, 30002, '4.4.4.4', 80))
+        foreign_rule = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        response = self.web_client.post('/api/rules/reorder', json={'server_id': server_id, 'rule_ids': [foreign_rule, own_rule]}, headers={'X-CSRF-Token': 'test-csrf-token'})
+        self.assertEqual(response.status_code, 400)
+
     def test_login_and_change_password(self):
         r = self.web_client.post('/login', json={'username':'admin','password':'Admin12345'})
         self.assertEqual(r.status_code, 200)

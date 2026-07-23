@@ -17,10 +17,10 @@ def servers():
     c = conn.cursor()
 
     if request.method == 'GET':
-        c.execute('SELECT id,name,host,port,status,last_check,created_at FROM servers ORDER BY id DESC')
-        server_list=[dict(row) for row in c.fetchall()]
+        c.execute('SELECT id,name,host,port,status,last_check,created_at,sort_order FROM servers ORDER BY sort_order ASC, id DESC')
+        server_list = [dict(row) for row in c.fetchall()]
         for server in server_list:
-            server['token_set']=True
+            server['token_set'] = True
             server['display_id'] = _app.circled_num(server['id'])
         conn.close()
         return jsonify(server_list)
@@ -48,8 +48,10 @@ def servers():
         except Exception:
             conn.close()
             return jsonify({'success': False, 'error': '服务器地址或端口无效'}), 400
-        c.execute('INSERT INTO servers (name, host, port, token) VALUES (?, ?, ?, ?)',
-                  (data['name'].strip(), host, port, _app.encrypt_token(data['token'].strip())))
+        c.execute('SELECT COALESCE(MIN(sort_order), 0) - 1 FROM servers')
+        next_sort_order = c.fetchone()[0]
+        c.execute('INSERT INTO servers (name, host, port, token, sort_order) VALUES (?, ?, ?, ?, ?)',
+                  (data['name'].strip(), host, port, _app.encrypt_token(data['token'].strip()), next_sort_order))
         conn.commit()
         server_id = c.lastrowid
         conn.close()
@@ -96,6 +98,33 @@ def update_server(server_id):
     conn.close()
     _app.audit_log('update_server', f"{_app.circled_num(server_id)}{data['name'].strip()}")
     return jsonify({'success': True})
+
+
+@bp.route('/api/servers/reorder', methods=['POST'])
+@_app.login_required
+def reorder_servers():
+    data = request.json or {}
+    server_ids = data.get('server_ids')
+    if not isinstance(server_ids, list) or not server_ids:
+        return jsonify({'success': False, 'error': 'server_ids 必须是非空数组'}), 400
+    try:
+        server_ids = [int(value) for value in server_ids]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '服务器编号必须为整数'}), 400
+    if len(server_ids) != len(set(server_ids)) or any(value < 1 for value in server_ids):
+        return jsonify({'success': False, 'error': '服务器编号重复或无效'}), 400
+
+    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
+    current_ids = [row[0] for row in conn.execute('SELECT id FROM servers').fetchall()]
+    if set(server_ids) != set(current_ids) or len(server_ids) != len(current_ids):
+        conn.close()
+        return jsonify({'success': False, 'error': '服务器列表已变化，请刷新后重试'}), 409
+    conn.executemany('UPDATE servers SET sort_order = ? WHERE id = ?',
+                     [(position, server_id) for position, server_id in enumerate(server_ids)])
+    conn.commit()
+    conn.close()
+    _app.audit_log('reorder_servers', 'servers', 'success', _app.json.dumps(server_ids))
+    return jsonify({'success': True, 'server_ids': server_ids})
 
 
 @bp.route('/api/servers/<int:server_id>', methods=['DELETE'])

@@ -16,9 +16,10 @@ def rules():
     c = conn.cursor()
 
     if request.method == 'GET':
-        c.execute('''SELECT r.*, s.name as server_name, s.host as server_host
+        c.execute('''SELECT r.*, s.name as server_name, s.host as server_host,
+                           s.sort_order as server_sort_order
                     FROM rules r JOIN servers s ON r.server_id = s.id
-                    ORDER BY r.id DESC''')
+                    ORDER BY s.sort_order ASC, s.id DESC, r.sort_order ASC, r.id DESC''')
         rows = [dict(row) for row in c.fetchall()]
         conn.close()
         return jsonify(rows)
@@ -63,10 +64,12 @@ def rules():
         conn.close()
         return jsonify({'success': False, 'error': '该服务器端口已存在规则'}), 400
 
-    c.execute('''INSERT INTO rules (server_id, local_port, target_host, target_ip, target_port, remark, traffic_limit_gb)
-                VALUES (?, ?, ?, ?, ?, ?, ?)''',
+    c.execute('SELECT COALESCE(MIN(sort_order), 0) - 1 FROM rules WHERE server_id = ?', (server_id,))
+    next_sort_order = c.fetchone()[0]
+    c.execute('''INSERT INTO rules (server_id, local_port, target_host, target_ip, target_port, remark, traffic_limit_gb, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
               (server_id, data['local_port'], data.get('target_host', ''), data['target_ip'], data['target_port'],
-               data.get('remark', ''), traffic_limit))
+               data.get('remark', ''), traffic_limit, next_sort_order))
     conn.commit()
     rule_id = c.lastrowid
     conn.close()
@@ -116,6 +119,38 @@ def rules():
         _app.log_event('ERROR', f"规则 {rule_id} 下发异常: {e}，已回滚数据库")
         return jsonify({'success': False, 'error': str(e)}), 502
 
+
+
+@bp.route('/api/rules/reorder', methods=['POST'])
+@_app.login_required
+def reorder_rules():
+    data = request.json or {}
+    try:
+        server_id = int(data.get('server_id'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '服务器编号无效'}), 400
+    rule_ids = data.get('rule_ids')
+    if not isinstance(rule_ids, list) or not rule_ids:
+        return jsonify({'success': False, 'error': 'rule_ids 必须是非空数组'}), 400
+    try:
+        rule_ids = [int(value) for value in rule_ids]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '规则编号必须为整数'}), 400
+    if len(rule_ids) != len(set(rule_ids)) or any(value < 1 for value in rule_ids):
+        return jsonify({'success': False, 'error': '规则编号重复或无效'}), 400
+
+    conn = sqlite3.connect(_app.DB_FILE, timeout=10)
+    current_ids = [row[0] for row in conn.execute(
+        'SELECT id FROM rules WHERE server_id = ?', (server_id,)).fetchall()]
+    if set(rule_ids) != set(current_ids) or len(rule_ids) != len(current_ids):
+        conn.close()
+        return jsonify({'success': False, 'error': '规则列表已变化或包含其他服务器规则，请刷新后重试'}), 400
+    conn.executemany('UPDATE rules SET sort_order = ? WHERE id = ? AND server_id = ?',
+                     [(position, rule_id, server_id) for position, rule_id in enumerate(rule_ids)])
+    conn.commit()
+    conn.close()
+    _app.audit_log('reorder_rules', f'server:{server_id}', 'success', _app.json.dumps(rule_ids))
+    return jsonify({'success': True, 'server_id': server_id, 'rule_ids': rule_ids})
 
 def _rollback_rule(rule_id):
     conn = sqlite3.connect(_app.DB_FILE, timeout=10)

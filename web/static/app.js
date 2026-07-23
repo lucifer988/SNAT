@@ -52,8 +52,8 @@ let servers = [];
 let rules = [];
 let csrfToken = '';
 let selectedRuleIds = new Set();
-let ruleSortKey = 'created_at';
-let ruleSortDir = 'desc';
+let ruleSortKey = 'sort_order';
+let ruleSortDir = 'asc';
 let ruleFilterText = '';
 
 // 页面加载时初始化
@@ -182,8 +182,8 @@ function renderServers() {
     tbody.innerHTML = servers.map(s => {
         const label = s.status === 'token_invalid' ? 'token异常' : s.status;
         return `
-        <tr>
-            <td data-label="编号">${esc(s.display_id || s.id)}</td>
+        <tr data-server-id="${s.id}" class="sortable-server-row">
+            <td data-label="排序/编号"><span class="drag-handle server-drag-handle" title="按住上下拖动服务器" aria-label="拖动服务器排序">☰</span><span>${esc(s.display_id || s.id)}</span></td>
             <td data-label="名称">${esc(s.name)}</td>
             <td data-label="地址">${esc(s.host)}</td>
             <td data-label="端口">${s.port}</td>
@@ -198,6 +198,86 @@ function renderServers() {
         </tr>
     `;
     }).join('');
+    setupServerSorting();
+}
+
+// 通用纵向拖动排序：仅拖动专用把手，避免与按钮、横向表格滑动和页面滚动冲突。
+function setupPointerSorting(container, itemSelector, handleSelector, onPersist) {
+    if (!container || container.dataset.sortReady === '1') return;
+    container.dataset.sortReady = '1';
+    let active = null;
+
+    container.addEventListener('pointerdown', (event) => {
+        if (container.classList.contains('sorting-disabled')) return;
+        const handle = event.target.closest(handleSelector);
+        const item = handle?.closest(itemSelector);
+        if (!handle || !item || event.button > 0) return;
+        active = {item, pointerId: event.pointerId, startY: event.clientY, moved: false};
+        handle.setPointerCapture?.(event.pointerId);
+        item.classList.add('sorting-pending');
+    });
+
+    container.addEventListener('pointermove', (event) => {
+        if (!active || event.pointerId !== active.pointerId) return;
+        if (!active.moved && Math.abs(event.clientY - active.startY) < 8) return;
+        active.moved = true;
+        active.item.classList.remove('sorting-pending');
+        active.item.classList.add('sorting-active');
+        event.preventDefault();
+        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(itemSelector);
+        if (!target || target === active.item || target.parentElement !== active.item.parentElement) return;
+        const box = target.getBoundingClientRect();
+        target.parentElement.insertBefore(active.item, event.clientY < box.top + box.height / 2 ? target : target.nextSibling);
+    });
+
+    const finish = async (event, cancelled = false) => {
+        if (!active || event.pointerId !== active.pointerId) return;
+        const state = active;
+        active = null;
+        state.item.classList.remove('sorting-pending', 'sorting-active');
+        if (!cancelled && state.moved) await onPersist(state.item.parentElement);
+    };
+    container.addEventListener('pointerup', event => finish(event));
+    container.addEventListener('pointercancel', event => finish(event, true));
+}
+
+function setupServerSorting() {
+    const tbody = document.querySelector('#serversTable tbody');
+    setupPointerSorting(tbody, '.sortable-server-row', '.server-drag-handle', async () => {
+        const serverIds = [...tbody.querySelectorAll('.sortable-server-row')].map(row => Number(row.dataset.serverId));
+        const resp = await postWithCsrf('/api/servers/reorder', {server_ids: serverIds});
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showError(data.error || '服务器排序保存失败');
+            await loadServers();
+            return;
+        }
+        servers.sort((a, b) => serverIds.indexOf(a.id) - serverIds.indexOf(b.id));
+        showSuccess('服务器顺序已保存');
+    });
+}
+
+function setupRuleSorting() {
+    const container = document.getElementById('rulesTree');
+    const manualMode = ruleSortKey === 'sort_order' && !ruleFilterText;
+    container?.classList.toggle('sorting-disabled', !manualMode);
+    if (!manualMode) return;
+    setupPointerSorting(container, '.sortable-rule', '.rule-drag-handle', async (list) => {
+        const items = [...list.querySelectorAll(':scope > .sortable-rule')];
+        const ruleIds = items.map(item => Number(item.dataset.ruleId));
+        const serverId = Number(items[0]?.dataset.serverId);
+        if (!serverId || !ruleIds.length) return;
+        const resp = await postWithCsrf('/api/rules/reorder', {server_id: serverId, rule_ids: ruleIds});
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showError(data.error || '规则排序保存失败');
+            await loadRules();
+            return;
+        }
+        const positions = new Map(ruleIds.map((id, index) => [id, index]));
+        rules.forEach(rule => { if (positions.has(rule.id)) rule.sort_order = positions.get(rule.id); });
+        showSuccess('规则顺序已保存；规则编号未改变');
+    });
 }
 
 // 检查服务器状态
@@ -241,7 +321,7 @@ function renderRulesTree() {
         if (!groups[sn]) groups[sn] = [];
         groups[sn].push(r);
     });
-    const serverNames = Object.keys(groups).sort();
+    const serverNames = Object.keys(groups); // API 已按服务器手动顺序返回，保留首次出现顺序。
     const filtering = !!ruleFilterText; // 搜索时强制展开所有分组，避免结果被折叠遮住
 
     container.innerHTML = serverNames.map(sn => {
@@ -263,6 +343,7 @@ function renderRulesTree() {
             </div>
         `;
     }).join('');
+    setupRuleSorting();
 }
 
 function renderTreeRule(r, idx) {
@@ -295,8 +376,9 @@ function renderTreeRule(r, idx) {
                     : '本地已停用';
 
     return `
-        <div class="tree-rule" style="border-left-color:${borderColor}">
+        <div class="tree-rule sortable-rule" data-rule-id="${r.id}" data-server-id="${r.server_id}" style="border-left-color:${borderColor}">
             <div class="tree-rule-main">
+                <span class="drag-handle rule-drag-handle" title="按住上下拖动规则；规则编号不会改变" aria-label="拖动规则排序">☰</span>
                 <span class="tree-rule-id" title="TGBOT 删除命令使用的规则序号">#${r.id}</span>
                 <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" style="width:16px;height:16px;">
                 <span class="tree-rule-port">${r.local_port}</span>
@@ -345,9 +427,16 @@ function getFilteredSortedRules() {
         items = items.filter(r => [r.server_name, r.local_port, r.target_host, r.target_ip, r.target_port, r.remark].join(' ').toLowerCase().includes(q));
     }
     items.sort((a, b) => {
+        if (ruleSortKey === 'sort_order') {
+            const serverOrder = Number(a.server_sort_order ?? 0) - Number(b.server_sort_order ?? 0);
+            if (serverOrder !== 0) return serverOrder;
+            const manualOrder = Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0);
+            if (manualOrder !== 0) return manualOrder;
+            return Number(b.id || 0) - Number(a.id || 0);
+        }
         const av = a[ruleSortKey] ?? '';
         const bv = b[ruleSortKey] ?? '';
-        if (av == bv) return 0;
+
         return ruleSortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
     });
     return items;

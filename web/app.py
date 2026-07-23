@@ -1650,9 +1650,19 @@ def init_db():
         token TEXT NOT NULL,
         status TEXT DEFAULT 'offline',
         last_check TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        sort_order INTEGER DEFAULT 0
     )''')
-    
+    server_sort_added = False
+    try:
+        c.execute('ALTER TABLE servers ADD COLUMN sort_order INTEGER DEFAULT 0')
+        server_sort_added = True
+    except sqlite3.OperationalError:
+        pass
+    # 仅迁移时初始化旧数据；后续启动不得覆盖用户已经拖好的顺序。
+    if server_sort_added:
+        c.execute('UPDATE servers SET sort_order = -id')
+
     # 转发规则表
     c.execute('''CREATE TABLE IF NOT EXISTS rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1670,17 +1680,25 @@ def init_db():
         last_agent_counter INTEGER DEFAULT 0,
         active_connections INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        sort_order INTEGER DEFAULT 0,
         FOREIGN KEY (server_id) REFERENCES servers(id)
     )''')
 
+    rule_sort_added = False
     for stmt in [
         "ALTER TABLE rules ADD COLUMN last_agent_counter INTEGER DEFAULT 0",
-        "ALTER TABLE rules ADD COLUMN active_connections INTEGER DEFAULT 0"
+        "ALTER TABLE rules ADD COLUMN active_connections INTEGER DEFAULT 0",
+        "ALTER TABLE rules ADD COLUMN sort_order INTEGER DEFAULT 0"
     ]:
         try:
             c.execute(stmt)
+            if 'sort_order' in stmt:
+                rule_sort_added = True
         except sqlite3.OperationalError:
             pass
+    # 仅迁移时初始化旧数据；规则 ID 保持不变，继续供 TGBOT 命令使用。
+    if rule_sort_added:
+        c.execute('UPDATE rules SET sort_order = -id')
 
     # 清理重复规则（同一服务器同一端口）
     c.execute('''DELETE FROM rules

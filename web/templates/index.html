@@ -835,6 +835,50 @@
             line-height: 1.5;
             word-break: break-word;
         }
+        .sort-hint {
+            margin: -8px 0 12px;
+            color: #64748b;
+            font-size: 12px;
+            line-height: 1.5;
+            text-align: center;
+        }
+        .drag-handle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            margin-right: 6px;
+            border-radius: 9px;
+            color: #64748b;
+            background: rgba(148,163,184,.12);
+            border: 1px solid rgba(148,163,184,.18);
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            flex: 0 0 auto;
+            font-size: 18px;
+            line-height: 1;
+        }
+        .drag-handle:active { cursor: grabbing; }
+        .sorting-pending { transition: none !important; }
+        .sorting-active {
+            position: relative;
+            z-index: 20;
+            opacity: .82;
+            transform: scale(.99);
+            box-shadow: 0 12px 30px rgba(59,130,246,.24) !important;
+            outline: 2px solid rgba(59,130,246,.35);
+        }
+        .sorting-disabled .rule-drag-handle {
+            opacity: .28;
+            cursor: not-allowed;
+            touch-action: auto;
+        }
+        #serversTable td:first-child {
+            white-space: nowrap;
+        }
         .tree-rule-traffic-bar { height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 6px; overflow: hidden; }
         .tree-rule-traffic-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
         .tree-rule-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; }
@@ -1191,6 +1235,15 @@
                 align-items: flex-start;
                 gap: 8px 6px;
             }
+            .drag-handle {
+                width: 40px;
+                height: 40px;
+                margin-right: 2px;
+            }
+            .server-drag-handle {
+                width: 36px;
+                height: 36px;
+            }
             .tree-rule-target {
                 min-width: 0;
                 flex: 1 1 100%;
@@ -1256,6 +1309,7 @@
         
         <div class="section">
             <h2>服务器列表</h2>
+            <div class="sort-hint">按住左侧 ☰ 上下拖动，可调整服务器显示顺序。</div>
             <div style="text-align:center; margin-bottom: 10px;">
                 <button class="btn-primary" data-act="showAddServerModal">+ 添加服务器</button>
             </div>
@@ -1276,6 +1330,7 @@
 
         <div class="section" id="rulesSection">
             <h2>转发规则 <span id="connectionsSummaryText" style="margin-left:12px;font-size:14px;color:#374151;">总活跃连接：0</span></h2>
+            <div class="sort-hint">选择“手动排序”后，按住规则左侧 ☰ 上下拖动；仅改变显示位置，不改变 TGBOT 使用的规则编号。</div>
             <div style="text-align:center; margin-bottom: 10px;">
                 <button class="btn-success" data-act="showAddRuleModal">+ 添加规则</button>
                 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button>
@@ -1286,7 +1341,8 @@
             <div style="display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
                 <input id="ruleSearch" type="search" data-input="setRuleFilter" placeholder="🔍 搜索规则（端口 / 目标 / 备注 / 服务器）" style="max-width:320px;display:inline-block;width:50%;">
                 <select id="ruleSortSelect" data-change="setRuleSortSelect" style="max-width:200px;display:inline-block;width:35%;">
-                    <option value="created_at:desc" selected>按创建时间（新→旧）</option>
+                    <option value="sort_order:asc" selected>手动排序（可拖动）</option>
+                    <option value="created_at:desc">按创建时间（新→旧）</option>
                     <option value="created_at:asc">按创建时间（旧→新）</option>
                     <option value="local_port:asc">按本地端口（小→大）</option>
                     <option value="local_port:desc">按本地端口（大→小）</option>
