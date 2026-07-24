@@ -19,7 +19,7 @@
         .snowflake {
             position: fixed;
             top: -10px;
-            color: #fff;
+            color: #38bdf8;
             font-size: 1.5em;
             pointer-events: none;
             z-index: 1000;
@@ -482,17 +482,17 @@
             box-shadow: none;
             font-size: 13px;
             margin: 0 3px;
-            color: #fff;
-            background: rgba(255,255,255,0.05);
+            color: #172033;
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd);
         }
         button:hover {
             transform: translateY(-1px);
             box-shadow: 0 8px 20px rgba(0,0,0,0.16);
             background: rgba(255,255,255,0.12);
         }
-        .btn-primary { background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; border: none; }
-        .btn-danger { background: linear-gradient(135deg, #ef4444, #f43f5e); color: white; border: none; }
-        .btn-success { background: linear-gradient(135deg, #06b6d4, #10b981); color: white; border: none; }
+        .btn-primary { background: linear-gradient(135deg, #f9a8d4, #c4b5fd); color: #172033; border: none; }
+        .btn-danger { background: linear-gradient(135deg, #fda4af, #fdba74); color: #172033; border: none; }
+        .btn-success { background: linear-gradient(135deg, #99f6e4, #93c5fd); color: #172033; border: none; }
         input, select, textarea {
             padding: 12px;
             border: 1px solid rgba(255,255,255,0.1);
@@ -724,8 +724,8 @@
         .conn-badge {
             display: inline-flex;
             align-items: center;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd);
+            color: #172033;
             border-radius: 12px;
             padding: 2px 8px;
             font-size: 11px;
@@ -734,7 +734,7 @@
 
         /* 服务器分组样式 */
         .server-group { margin-bottom: 12px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        .server-group-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; font-weight: 600; border-radius: 12px 12px 0 0; }
+        .server-group-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: linear-gradient(135deg, #bae6fd 0%, #c4b5fd 100%); color: #172033; cursor: pointer; font-weight: 600; border-radius: 12px 12px 0 0; }
         .server-group-title { font-size: 15px; }
         .server-group-count { font-size: 12px; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; }
         .server-group-arrow { transition: transform 0.3s; }
@@ -742,7 +742,7 @@
 
         /* 树形规则列表样式 */
         .tree-server { margin-bottom: 10px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); background: #fff; }
-        .tree-server-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; font-weight: 600; }
+        .tree-server-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, #bae6fd 0%, #c4b5fd 100%); color: #172033; cursor: pointer; font-weight: 600; }
         .tree-server-icon { font-size: 20px; color: #fbcfe8; text-shadow: 0 0 8px #f9a8d4; }
         .tree-server-name { flex: 1; font-size: 15px; color: #67e8f9; font-weight: 800; text-shadow: 0 0 10px rgba(34,211,238,.35); }
         .tree-server-count { font-size: 12px; background: rgba(255,255,255,0.25); padding: 3px 10px; border-radius: 12px; }
@@ -1145,11 +1145,11 @@
             outline: none;
             box-shadow: 0 0 0 3px rgba(79,70,229,.35);
         }
-        .btn-primary { background: linear-gradient(135deg, var(--primary-pink-strong) 0%, var(--primary-pink) 100%) !important; color: #fff !important; }
+        .btn-primary { background: linear-gradient(135deg, var(--primary-pink-strong) 0%, var(--primary-pink) 100%) !important; color: #172033 !important; }
         .btn-primary:hover { background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-pink-strong) 100%) !important; }
-        .btn-success { background: linear-gradient(135deg, var(--secondary-blue) 0%, var(--secondary-blue-strong) 100%) !important; color: #fff !important; }
+        .btn-success { background: linear-gradient(135deg, var(--secondary-blue) 0%, var(--secondary-blue-strong) 100%) !important; color: #172033 !important; }
         .btn-success:hover { background: var(--success-hover) !important; }
-        .btn-danger { background: linear-gradient(135deg, #ff7b95 0%, var(--danger) 100%) !important; color: #fff !important; }
+        .btn-danger { background: linear-gradient(135deg, #ff7b95 0%, var(--danger) 100%) !important; color: #172033 !important; }
         .btn-danger:hover { background: var(--danger-hover) !important; }
 
         /* 表单控件 */
@@ -1280,7 +1280,7 @@
         .tree-rule-info { color: #374151; gap: 22px; margin-top: 12px; line-height: 1.6; }
         .tree-rule-actions { justify-content: flex-start; margin-top: 2px; gap: 10px; }
         .tree-rule:not(:last-child) { margin-bottom: 12px; }
-        .tree-rule-actions button { color: #fff; border: none; }
+        .tree-rule-actions button { color: #172033; border: none; }
         .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #f59e0b, #f97316); }
         .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #3b82f6, #6366f1); }
         .tree-rule-actions button:nth-child(3) { background: linear-gradient(135deg, #ef4444, #f43f5e); }
@@ -1295,7 +1295,7 @@
             box-shadow: 0 8px 18px rgba(0,0,0,.18);
         }
         .rule-card-label { color: #94a3b8; }
-        .rule-card-value { color: #e2e8f0; }
+        .rule-card-value { color: #1f2937; }
 
         /* 流量条 */
         .traffic-bar, .tree-rule-traffic-bar {
@@ -1309,28 +1309,28 @@
 
         /* 移动端底部栏 */
         .mobile-bottom-bar {
-            background: rgba(15,23,42,.92);
-            border-top: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.94);
+            border-top: 1px solid var(--border);
             box-shadow: 0 -8px 26px rgba(0,0,0,.28);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             overscroll-behavior: contain;
         }
-        .mobile-bottom-bar button { color: #e2e8f0; background: transparent; box-shadow: none; }
-        .modal { background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); }
+        .mobile-bottom-bar button { color: #1f2937; background: transparent; box-shadow: none; }
+        .modal { background: rgba(74,74,74,0.38); backdrop-filter: blur(8px); }
         .modal-content {
-            background: #1e293b;
-            border: 1px solid rgba(255,255,255,0.1);
-            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            background: #fff7fa;
+            border: 1px solid var(--border-strong);
+            box-shadow: 0 20px 50px rgba(74,74,74,0.28);
         }
-        .modal-header { border-bottom: 1px solid rgba(255,255,255,0.08); }
-        .modal-header h2 { color: #38bdf8; }
-        .form-group label { color: #cbd5e1; }
-        small { color: #94a3b8; }
-        #bulkBar { border: 1px solid rgba(255,255,255,.08) !important; background: rgba(255,255,255,.03) !important; color: #e2e8f0; }
+        .modal-header { border-bottom: 1px solid var(--border); }
+        .modal-header h2 { color: #334155; }
+        .form-group label { color: #334155; }
+        small { color: #64748b; }
+        #bulkBar { border: 1px solid var(--border) !important; background: rgba(255,255,255,.72) !important; color: #1f2937; }
 
         /* 顶部强制 HTTPS 开关与日志框收口 */
-        #logsContent { background: rgba(0,0,0,.18) !important; border-color: rgba(255,255,255,.06) !important; color: #cbd5e1; }
+        #logsContent { background: #f8fafc !important; border-color: #cbd5e1 !important; color: #1f2937; }
         html, body { overscroll-behavior-y: auto; }
         .container, .section, .modal-content { touch-action: pan-y; }
         .table-wrap, #rulesTree, #rulesList, #auditContent, #logsContent, #diagResults { -webkit-overflow-scrolling: touch; }
@@ -1350,7 +1350,7 @@
             align-items: center;
             column-gap: 8px;
             margin: 0;
-            color: #cbd5e1;
+            color: #334155;
         }
         .tg-options input[type="checkbox"] {
             width: 20px;
@@ -1360,6 +1360,34 @@
         }
         .tg-options .tg-time-row { grid-template-columns: 92px 120px; }
         .tg-options input[type="time"] { width: 120px; min-width: 120px; }
+
+        /* 最终按钮可读性：所有按钮使用彩色底和深色文字，禁止白底/白字。 */
+        button,
+        .btn-primary,
+        .btn-success,
+        .btn-danger,
+        .tree-rule-actions button,
+        .mobile-bottom-bar button,
+        .close {
+            color: #172033 !important;
+            border-color: rgba(23,32,51,.16) !important;
+            text-shadow: none !important;
+        }
+        button:not(.btn-primary):not(.btn-success):not(.btn-danger):not(.close) {
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd) !important;
+        }
+        .btn-primary { background: linear-gradient(135deg, #f9a8d4, #c4b5fd) !important; }
+        .btn-success { background: linear-gradient(135deg, #99f6e4, #93c5fd) !important; }
+        .btn-danger { background: linear-gradient(135deg, #fda4af, #fdba74) !important; }
+        .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #fcd34d, #fb923c) !important; }
+        .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #93c5fd, #a5b4fc) !important; }
+        .tree-rule-actions button:nth-child(3) { background: linear-gradient(135deg, #fda4af, #fb7185) !important; }
+        .mobile-bottom-bar button { background: linear-gradient(135deg, #bae6fd, #c4b5fd) !important; }
+        .close { background: #fbcfe8 !important; }
+
+        /* 流量概览改为横向条形图后，画布按内容高度展示，移动端不横向溢出。 */
+        #trafficSummary { min-width: 0; overflow: hidden; }
+        #trafficChart { display: block; width: 100%; max-width: 100%; }
 
         /* 最终移动端覆盖：必须放在所有桌面默认规则之后，避免后置 #rulesList/.mobile-bottom-bar display:none 吞掉触控按钮。 */
         @media (max-width: 768px) {

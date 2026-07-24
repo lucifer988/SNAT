@@ -801,8 +801,8 @@ function showError(message) {
 function showToast(message, color, duration = 3000, detail = '') {
     const toast = document.createElement('div');
     toast.className = 'toast';
-    toast.style.cssText = `position:fixed;top:20px;right:20px;background:${color};color:#fff;padding:14px 16px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;max-width:420px;display:flex;gap:10px;align-items:flex-start`;
-    toast.innerHTML = `<div style="font-size:18px">${color === '#f5576c' ? '❌' : color === '#ffa500' ? '⚠️' : '✅'}</div><div style="flex:1"><div>${esc(message)}</div>${detail ? `<div style="margin-top:6px;font-size:12px;opacity:.9">${esc(detail)}</div>` : ''}</div><button style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">×</button>`;
+    toast.style.cssText = `position:fixed;top:20px;right:20px;background:${color};color:#172033;padding:14px 16px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;max-width:420px;display:flex;gap:10px;align-items:flex-start;font-weight:700`;
+    toast.innerHTML = `<div style="font-size:18px">${color === '#f5576c' ? '❌' : color === '#ffa500' ? '⚠️' : '✅'}</div><div style="flex:1"><div>${esc(message)}</div>${detail ? `<div style="margin-top:6px;font-size:12px;opacity:.9">${esc(detail)}</div>` : ''}</div><button style="background:#fbcfe8;border:1px solid rgba(23,32,51,.16);color:#172033;font-size:18px;cursor:pointer">×</button>`;
     toast.querySelector('button').onclick = () => toast.remove();
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), duration);
@@ -1083,11 +1083,19 @@ async function loadTrafficSummary() {
     if (!data.success) { el.innerHTML = '流量汇总加载失败'; return; }
 
     const totalGB = (data.total_bytes / (1024**3)).toFixed(2);
-    const labels = data.top_rules.map(r => (r.remark && r.remark.trim()) ? r.remark.trim() : String(r.local_port));
+    // 流量概览以节点名称为主；同一节点有多条规则时附端口，避免标签无法区分。
+    const serverCounts = data.top_rules.reduce((acc, r) => {
+        const name = String(r.server_name || '未知节点');
+        acc[name] = (acc[name] || 0) + 1;
+        return acc;
+    }, {});
+    const labels = data.top_rules.map(r => {
+        const name = String(r.server_name || '未知节点');
+        return serverCounts[name] > 1 ? `${name}:${r.local_port}` : name;
+    });
     const values = data.top_rules.map(r => Number((r.traffic_used_bytes / (1024**3)).toFixed(2)));
-    const topLabels = labels.map(x => x.length > 14 ? (x.slice(0, 14) + '…') : x);
 
-    el.innerHTML = `<div style="display:grid;gap:8px;color:#1f2937;font-weight:700"><div>总流量：<b style="color:#111827">${totalGB} GB</b></div><div>规则数：<b style="color:#111827">${data.rules_count}</b>，启用：<b style="color:#111827">${data.enabled_count}</b></div><div style="font-size:12px;color:#374151;word-break:break-word;line-height:1.45">Top 10：<span style="color:#111827">${esc(topLabels.join(' / ')) || '暂无'}</span></div><canvas id="trafficChart" height="170"></canvas></div>`;
+    el.innerHTML = `<div style="display:grid;gap:8px;color:#1f2937;font-weight:700;min-width:0"><div>总流量：<b style="color:#111827">${totalGB} GB</b></div><div>规则数：<b style="color:#111827">${data.rules_count}</b>，启用：<b style="color:#111827">${data.enabled_count}</b></div><canvas id="trafficChart" height="170" aria-label="Top 10 节点流量横向条形图"></canvas></div>`;
 
     const canvas = document.getElementById('trafficChart');
     if (!(canvas && labels.length)) return;
@@ -1095,58 +1103,57 @@ async function loadTrafficSummary() {
     const ctx = canvas.getContext('2d');
     const isMobile = window.innerWidth <= 768;
     const parentW = canvas.parentElement.clientWidth;
-    const w = canvas.width = Math.max(260, parentW - 12);
-    const h = canvas.height = isMobile ? 200 : 170;
+    const w = canvas.width = Math.max(240, Math.floor(parentW));
+    const rowH = isMobile ? 31 : 29;
+    const h = canvas.height = Math.max(70, labels.length * rowH + 22);
 
     ctx.clearRect(0, 0, w, h);
 
     const max = Math.max(...values, 1);
-    const n = labels.length;
-    const gap = isMobile ? 6 : 10;
-    const plotL = 10;
-    const plotR = 10;
-    const plotW = w - plotL - plotR;
-    const barW = Math.max(14, Math.floor((plotW - gap * (n - 1)) / Math.max(n, 1)));
-    const step = barW + gap;
-    const chartBottom = h - (isMobile ? 54 : 36);
-    const chartTop = 26;
-    const chartH = Math.max(80, chartBottom - chartTop);
+    const plotR = 8;
+    const labelLeft = 6;
+    const labelGap = 8;
+    const labelW = Math.min(isMobile ? 128 : 220, Math.max(78, Math.floor(w * (isMobile ? 0.40 : 0.34))));
+    const barX = labelLeft + labelW + labelGap;
+    const barMaxW = Math.max(60, w - barX - plotR);
+
+    const fitLabel = (text, maxWidth) => {
+        if (ctx.measureText(text).width <= maxWidth) return text;
+        const suffix = '…';
+        let lo = 0, hi = text.length;
+        while (lo < hi) {
+            const mid = Math.ceil((lo + hi) / 2);
+            if (ctx.measureText(text.slice(0, mid) + suffix).width <= maxWidth) lo = mid;
+            else hi = mid - 1;
+        }
+        return text.slice(0, lo) + suffix;
+    };
 
     ctx.textBaseline = 'alphabetic';
     ctx.lineWidth = 1;
 
     values.forEach((v, i) => {
-        const x = plotL + i * step;
-        const bh = Math.max(4, (v / max) * chartH);
-        const y = chartBottom - bh;
+        const y = 10 + i * rowH;
+        const barH = isMobile ? 15 : 14;
+        const bw = Math.max(4, (v / max) * barMaxW);
 
+        ctx.font = isMobile ? '600 11px sans-serif' : '600 12px sans-serif';
+        ctx.fillStyle = '#1f2937';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(fitLabel(labels[i] || '', labelW), labelLeft + labelW, y + barH / 2);
+
+        ctx.fillStyle = '#e5e7eb';
+        ctx.fillRect(barX, y, barMaxW, barH);
         ctx.fillStyle = '#667eea';
-        ctx.fillRect(x, y, barW, bh);
+        ctx.fillRect(barX, y, bw, barH);
 
+        const valueText = `${v}G`;
+        ctx.font = isMobile ? '700 10px sans-serif' : '700 11px sans-serif';
+        const valueW = ctx.measureText(valueText).width;
+        ctx.textAlign = 'left';
         ctx.fillStyle = '#111827';
-        ctx.font = isMobile ? 'bold 10px sans-serif' : 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(v) + 'G', x + barW / 2, Math.max(12, y - 4));
-
-        const raw = labels[i] || '';
-        const clipped = raw.length > 10 ? (raw.slice(0, 10) + '…') : raw;
-
-        if (isMobile) {
-            const maxCharsPerLine = Math.max(2, Math.floor((barW + gap) / 7));
-            const line1 = clipped.slice(0, maxCharsPerLine);
-            const line2 = clipped.slice(maxCharsPerLine, maxCharsPerLine * 2);
-            const cx = x + barW / 2;
-            ctx.fillStyle = '#374151';
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(line1, cx, h - 20);
-            if (line2) ctx.fillText(line2, cx, h - 8);
-        } else {
-            ctx.fillStyle = '#374151';
-            ctx.font = '11px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText(clipped, x, h - 8);
-        }
+        ctx.fillText(valueText, Math.min(barX + bw + 4, w - valueW - 2), y + barH / 2);
     });
 }
 
