@@ -544,7 +544,7 @@ function renderTreeRule(r, idx) {
             <div class="tree-rule-traffic-wrap" title="${traffic.unlimited ? `已使用 ${traffic.usedGB} GB（未设置限额）` : `已使用 ${traffic.percent.toFixed(1)}%`}">
                 <div class="tree-rule-traffic-meta"><span>流量进度</span><strong>${traffic.summaryText}</strong></div>
                 <div class="tree-rule-traffic-bar ${traffic.unlimited ? 'is-unlimited' : ''}">
-                    <div class="tree-rule-traffic-fill ${traffic.barClass}" style="--rule-progress:${traffic.unlimited ? (Number(traffic.usedGB) > 0 ? Math.max(12, Math.min(88, 18 + Math.log10(Number(traffic.usedGB) + 1) * 34)) : 5) : traffic.percent}%;--rule-color:${borderColor};"></div>
+                    <div class="tree-rule-traffic-fill ${traffic.barClass}" style="--rule-progress:${traffic.unlimited ? 100 : traffic.percent}%;--rule-color:${borderColor};"></div>
                 </div>
             </div>
             <div class="tree-rule-actions">
