@@ -1499,6 +1499,96 @@
         .drag-handle:hover .drag-grip-lines i:nth-child(2) { width:18px; }
         .drag-handle:active { cursor:grabbing; transform:scale(.94); }
 
+        /* 规则卡片最终布局：固定信息层级和8px节奏，避免内容随长度漂移。 */
+        .tree-server-rules { padding: 10px 6px; }
+        .tree-rule {
+            padding: 0 0 16px;
+            overflow: hidden;
+            border: 1px solid rgba(99,102,241,.12);
+            border-left-width: 4px;
+            border-radius: 15px;
+            background: linear-gradient(145deg, rgba(255,255,255,.78), rgba(248,250,252,.68));
+            box-shadow: 0 8px 22px rgba(51,65,85,.09), inset 0 1px 0 rgba(255,255,255,.92);
+        }
+        .tree-rule:not(:last-child) { margin-bottom: 12px; }
+        .tree-rule-main {
+            display: grid;
+            grid-template-columns: auto minmax(240px, 1fr) auto;
+            align-items: center;
+            gap: 14px;
+            margin: 0;
+            padding: 14px;
+            background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(248,250,252,.38));
+            border-bottom: 1px solid rgba(148,163,184,.14);
+            text-align: left;
+        }
+        .tree-rule-controls { display:flex; align-items:center; gap:9px; min-width:0; }
+        .tree-rule-controls input[type="checkbox"] { width:18px; height:18px; margin:0; flex:0 0 auto; }
+        .tree-rule-controls .drag-handle { margin-right:0; }
+        .tree-rule-id {
+            min-width:48px;
+            padding:5px 9px;
+            color:#334155;
+            background:rgba(224,231,255,.72);
+            border-color:rgba(99,102,241,.20);
+        }
+        .tree-rule-route { min-width:0; }
+        .tree-rule-route-label {
+            display:block;
+            margin-bottom:3px;
+            color:#64748b;
+            font-size:10px;
+            font-weight:700;
+            letter-spacing:.05em;
+        }
+        .tree-rule-route-value { display:flex; align-items:center; gap:8px; min-width:0; font-size:14px; line-height:1.4; }
+        .tree-rule-port { color:#4338ca; font-size:16px; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .tree-rule-arrow { color:#94a3b8; font-weight:700; flex:0 0 auto; }
+        .tree-rule-target { min-width:0; color:#1f2937; font-weight:650; overflow-wrap:anywhere; }
+        .tree-rule-status-group {
+            display:flex;
+            align-items:center;
+            justify-content:flex-end;
+            gap:6px;
+            margin:0;
+            min-width:132px;
+        }
+        .tree-rule-status { min-width:58px; text-align:center; box-sizing:border-box; }
+        .tree-rule-info {
+            display:grid;
+            grid-template-columns:repeat(4,minmax(0,1fr));
+            gap:8px;
+            margin:12px 14px 0;
+            padding:0;
+            color:#334155;
+            text-align:left;
+        }
+        .tree-rule-info-item {
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
+            min-width:0;
+            min-height:54px;
+            padding:8px 10px;
+            border:1px solid rgba(148,163,184,.14);
+            border-radius:10px;
+            background:rgba(255,255,255,.52);
+            box-sizing:border-box;
+        }
+        .tree-rule-info-item small { margin-bottom:3px; color:#64748b; font-size:10px; font-weight:650; line-height:1.2; }
+        .tree-rule-info-item strong { min-width:0; color:#334155; font-size:12px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+        .tree-rule-remark.is-wide { grid-column: span 2; }
+        .tree-rule-traffic-wrap { margin:10px 14px 0; }
+        .tree-rule-actions {
+            display:grid;
+            grid-template-columns:repeat(3,minmax(84px,112px));
+            justify-content:start;
+            gap:8px;
+            margin:10px 14px 0;
+            padding:0;
+        }
+        .tree-rule-actions button { width:100%; min-height:38px; margin:0; padding:8px 12px; border-radius:10px; }
+
         /* 最终移动端覆盖：必须放在所有桌面默认规则之后，避免后置 #rulesList/.mobile-bottom-bar display:none 吞掉触控按钮。 */
         @media (max-width: 768px) {
             .tg-options {
@@ -1513,10 +1603,29 @@
             #rulesList { display: block; }
             .mobile-bottom-bar { display: flex; }
             .tree-server-rules.expanded { display: block; }
+            .tree-server-rules { padding: 8px 4px; }
+            .tree-rule { padding-bottom: 12px; border-radius: 14px; }
             .tree-rule-main {
-                align-items: flex-start;
-                gap: 8px 6px;
+                grid-template-columns: minmax(0, 1fr) auto;
+                grid-template-areas:
+                    "controls status"
+                    "route route";
+                align-items: center;
+                gap: 10px 8px;
+                padding: 12px;
             }
+            .tree-rule-controls { grid-area: controls; gap: 8px; }
+            .tree-rule-route { grid-area: route; padding-top: 2px; }
+            .tree-rule-status-group {
+                grid-area: status;
+                width: auto;
+                min-width: 0;
+                justify-content: flex-end;
+                gap: 4px;
+            }
+            .tree-rule-status { min-width: 54px; padding: 3px 6px; font-size: 10px; }
+            .tree-rule-route-value { align-items: flex-start; gap: 7px; }
+            .tree-rule-target { flex: 1; min-width: 0; }
             .drag-handle {
                 width: 44px;
                 height: 44px;
@@ -1534,22 +1643,18 @@
             .sortable-server-row {
                 touch-action: none;
             }
-            .tree-rule-target {
-                min-width: 0;
-                flex: 1 1 100%;
-                order: 2;
-            }
-            .tree-rule-status-group {
-                width: 100%;
-                margin-left: 0;
-                justify-content: flex-start;
-                order: 3;
-            }
             .tree-rule-info {
-                gap: 8px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 7px;
+                margin: 10px 10px 0;
             }
-            .tree-rule-info > span {
-                flex: 1 1 100%;
+            .tree-rule-info-item { min-height: 52px; padding: 8px 9px; }
+            .tree-rule-remark { grid-column: 1 / -1; }
+            .tree-rule-traffic-wrap { margin: 9px 10px 0; padding: 9px 10px 10px; }
+            .tree-rule-actions {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 7px;
+                margin: 9px 10px 0;
             }
             .reconcile-item {
                 padding: 10px;
@@ -1561,13 +1666,16 @@
             .reconcile-status {
                 font-size: 12px;
             }
-            .tree-rule-actions { display: flex; position: relative; z-index: 2; }
+            .tree-rule-actions { display: grid; position: relative; z-index: 2; }
             .tree-rule-actions button {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                min-width: 64px;
+                width: 100%;
+                min-width: 0;
                 min-height: 44px;
+                margin: 0;
+                padding: 8px 4px;
                 pointer-events: auto;
                 touch-action: manipulation;
             }
@@ -1879,7 +1987,7 @@
     </div>
 
     <!-- 主逻辑：显式带 nonce，避免在某些严格 CSP / 浏览器自动化环境中被误拦截，确保 data-act 事件委托脚本稳定加载。 -->
-    <script src="/static/app.js?v=5" nonce="{{ csp_nonce }}"></script>
+    <script src="/static/app.js?v=6" nonce="{{ csp_nonce }}"></script>
 
     <!-- 移动端键盘检测 & PWA meta -->
     <script nonce="{{ csp_nonce }}">

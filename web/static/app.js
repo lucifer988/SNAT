@@ -526,20 +526,26 @@ function renderTreeRule(r, idx) {
     return `
         <div class="tree-rule sortable-rule" data-rule-id="${r.id}" data-server-id="${r.server_id}" style="border-left-color:${borderColor}">
             <div class="tree-rule-main">
-                <span class="drag-handle rule-drag-handle" title="按住三横线拖动规则；规则编号不会改变" aria-label="拖动规则排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span>
-                <span class="tree-rule-id" title="TGBOT 删除命令使用的规则序号">#${r.id}</span>
-                <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" style="width:16px;height:16px;">
-                <span class="tree-rule-port">${r.local_port}</span>
-                <span class="tree-rule-arrow">→</span>
-                <span class="tree-rule-target">${esc(targetDisplay)}:${r.target_port}</span>
+                <div class="tree-rule-controls">
+                    <span class="drag-handle rule-drag-handle" title="按住三横线拖动规则；规则编号不会改变" aria-label="拖动规则排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span>
+                    <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" aria-label="选择规则 #${r.id}">
+                    <span class="tree-rule-id" title="TGBOT 删除命令使用的规则序号">#${r.id}</span>
+                </div>
+                <div class="tree-rule-route">
+                    <span class="tree-rule-route-label">转发路径</span>
+                    <div class="tree-rule-route-value">
+                        <span class="tree-rule-port">${r.local_port}</span>
+                        <span class="tree-rule-arrow">→</span>
+                        <span class="tree-rule-target">${esc(targetDisplay)}:${r.target_port}</span>
+                    </div>
+                </div>
                 <span class="tree-rule-status-group">${statusBadges.join('')}</span>
             </div>
             <div class="tree-rule-info">
-                <span>状态: <span class="tree-rule-status-text">${statusSummary}</span></span>
-                <span>流量: ${traffic.summaryText}</span>
-                <span>连接: <span class="${connClass}">${connCount}</span></span>
-                ${r.created_at ? `<span>创建: ${esc(formatCreatedAt(r.created_at))}</span>` : ''}
-                ${r.remark ? `<span>备注: ${esc(r.remark)}</span>` : ''}
+                <span class="tree-rule-info-item"><small>同步状态</small><strong class="tree-rule-status-text">${statusSummary}</strong></span>
+                <span class="tree-rule-info-item"><small>活跃连接</small><strong class="${connClass}">${connCount}</strong></span>
+                ${r.created_at ? `<span class="tree-rule-info-item"><small>创建时间</small><strong>${esc(formatCreatedAt(r.created_at))}</strong></span>` : ''}
+                <span class="tree-rule-info-item tree-rule-remark ${r.created_at ? '' : 'is-wide'}"><small>规则备注</small><strong>${esc(r.remark || '未填写')}</strong></span>
             </div>
             <div class="tree-rule-traffic-wrap" title="${traffic.unlimited ? `已使用 ${traffic.usedGB} GB（未设置限额）` : `已使用 ${traffic.percent.toFixed(1)}%`}">
                 <div class="tree-rule-traffic-meta"><span>流量进度</span><strong>${traffic.summaryText}</strong></div>
