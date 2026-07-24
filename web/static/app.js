@@ -183,7 +183,7 @@ function renderServers() {
         const label = s.status === 'token_invalid' ? 'token异常' : s.status;
         return `
         <tr data-server-id="${s.id}" class="sortable-server-row">
-            <td data-label="排序/编号"><span class="drag-handle server-drag-handle" title="按住上下拖动服务器" aria-label="拖动服务器排序">☰</span><span>${esc(s.display_id || s.id)}</span></td>
+            <td data-label="排序/编号"><span class="drag-handle server-drag-handle" title="按住三横线拖动服务器" aria-label="拖动服务器排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span><span>${esc(s.display_id || s.id)}</span></td>
             <td data-label="名称">${esc(s.name)}</td>
             <td data-label="地址">${esc(s.host)}</td>
             <td data-label="端口">${s.port}</td>
@@ -201,23 +201,13 @@ function renderServers() {
     setupServerSorting();
 }
 
-// 通用纵向拖动排序：支持把手拖动，也支持按住卡片/行的空白区域直接拖动。
+// 通用纵向拖动排序：只允许从专用三横线把手启动，避免手机滚动或轻触卡片时误排序。
 function setupPointerSorting(container, itemSelector, handleSelector, onPersist) {
     if (!container || container.dataset.sortReady === '1') return;
     container.dataset.sortReady = '1';
     let active = null;
     const isTouchLikeDevice = window.matchMedia('(max-width: 768px)').matches || navigator.maxTouchPoints > 0;
 
-    const INTERACTIVE_SELECTOR = [
-        'button', 'a', 'input', 'select', 'textarea', 'label',
-        '[data-act]', '[data-change]', '[data-input]', '[data-submit]',
-        '.tree-rule-actions', '.action-group', '.close'
-    ].join(', ');
-
-    const isInteractiveTarget = (target, item) => {
-        if (!target || !item) return false;
-        return !!target.closest(INTERACTIVE_SELECTOR) && !target.closest(handleSelector)?.closest(itemSelector)?.isSameNode(item);
-    };
 
     const siblingsFor = (state) => [...state.parent.querySelectorAll(`:scope > ${itemSelector}`)].filter(node => node !== state.item && node !== state.placeholder);
 
@@ -320,13 +310,10 @@ function setupPointerSorting(container, itemSelector, handleSelector, onPersist)
         if (event.button !== undefined && event.button > 0) return;
 
         const handle = event.target.closest(handleSelector);
-        const allowWholeItemDrag = item.matches('.sortable-rule') || item.matches('.sortable-server-row');
-        if (!handle && !allowWholeItemDrag) return;
-        if (!handle && isInteractiveTarget(event.target, item)) return;
+        if (!handle) return;
 
         const rect = item.getBoundingClientRect();
-        const usingHandle = !!handle;
-        const pointerOwner = handle || item;
+        const pointerOwner = handle;
         setActive({
             item,
             handle: pointerOwner,
@@ -345,12 +332,11 @@ function setupPointerSorting(container, itemSelector, handleSelector, onPersist)
             snapStrength: 0,
             lastClientY: event.clientY,
             touchLike: isTouchLikeDevice,
-            scale: usingHandle ? (isTouchLikeDevice ? 1.03 : 1.015) : (isTouchLikeDevice ? 1.025 : 1.01),
+            scale: isTouchLikeDevice ? 1.03 : 1.015,
             rotation: item.matches('.sortable-rule') ? (isTouchLikeDevice ? 0 : (event.clientX % 2 === 0 ? -1.2 : 1.2)) : 0
         });
         pointerOwner.setPointerCapture?.(event.pointerId);
         item.classList.add('sorting-pending');
-        if (!usingHandle) item.classList.add('drag-surface-active');
     });
 
     container.addEventListener('pointermove', (event) => {
@@ -384,7 +370,7 @@ function setupPointerSorting(container, itemSelector, handleSelector, onPersist)
         const state = active;
         if (!state || event.pointerId !== state.pointerId) return;
         setActive(null);
-        state.item.classList.remove('sorting-pending', 'sorting-active', 'drag-surface-active');
+        state.item.classList.remove('sorting-pending', 'sorting-active');
         state.item.style.visibility = '';
         if (state.placeholder?.parentNode) {
             state.placeholder.style.setProperty('--placeholder-pop', '1.06');
@@ -540,7 +526,7 @@ function renderTreeRule(r, idx) {
     return `
         <div class="tree-rule sortable-rule" data-rule-id="${r.id}" data-server-id="${r.server_id}" style="border-left-color:${borderColor}">
             <div class="tree-rule-main">
-                <span class="drag-handle rule-drag-handle" title="按住上下拖动规则；规则编号不会改变" aria-label="拖动规则排序">☰</span>
+                <span class="drag-handle rule-drag-handle" title="按住三横线拖动规则；规则编号不会改变" aria-label="拖动规则排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span>
                 <span class="tree-rule-id" title="TGBOT 删除命令使用的规则序号">#${r.id}</span>
                 <input type="checkbox" data-change="toggleRuleSelection" data-arg="${r.id}" ${selectedRuleIds.has(r.id) ? 'checked' : ''} title="选择该规则参与批量操作" style="width:16px;height:16px;">
                 <span class="tree-rule-port">${r.local_port}</span>
@@ -555,7 +541,12 @@ function renderTreeRule(r, idx) {
                 ${r.created_at ? `<span>创建: ${esc(formatCreatedAt(r.created_at))}</span>` : ''}
                 ${r.remark ? `<span>备注: ${esc(r.remark)}</span>` : ''}
             </div>
-            <div class="tree-rule-traffic-bar"><div class="tree-rule-traffic-fill ${traffic.barClass}" style="width:${traffic.percent}%;${traffic.unlimited ? '' : `background:linear-gradient(90deg,${borderColor}cc,${borderColor})`} "></div></div>
+            <div class="tree-rule-traffic-wrap" title="${traffic.unlimited ? `已使用 ${traffic.usedGB} GB（未设置限额）` : `已使用 ${traffic.percent.toFixed(1)}%`}">
+                <div class="tree-rule-traffic-meta"><span>流量进度</span><strong>${traffic.summaryText}</strong></div>
+                <div class="tree-rule-traffic-bar ${traffic.unlimited ? 'is-unlimited' : ''}">
+                    <div class="tree-rule-traffic-fill ${traffic.barClass}" style="--rule-progress:${traffic.unlimited ? (Number(traffic.usedGB) > 0 ? Math.max(12, Math.min(88, 18 + Math.log10(Number(traffic.usedGB) + 1) * 34)) : 5) : traffic.percent}%;--rule-color:${borderColor};"></div>
+                </div>
+            </div>
             <div class="tree-rule-actions">
                 <button data-act="toggleRule" data-arg="${r.id}">${r.enabled ? '禁用' : '启用'}</button>
                 <button data-act="editRule" data-arg="${r.id}">编辑</button>
@@ -1083,15 +1074,11 @@ async function loadTrafficSummary() {
     if (!data.success) { el.innerHTML = '流量汇总加载失败'; return; }
 
     const totalGB = (data.total_bytes / (1024**3)).toFixed(2);
-    // 流量概览以节点名称为主；同一节点有多条规则时附端口，避免标签无法区分。
-    const serverCounts = data.top_rules.reduce((acc, r) => {
-        const name = String(r.server_name || '未知节点');
-        acc[name] = (acc[name] || 0) + 1;
-        return acc;
-    }, {});
+    // 标签统一为“服务器:备注”；没有备注时回退到端口，确保每条规则可区分。
     const labels = data.top_rules.map(r => {
         const name = String(r.server_name || '未知节点');
-        return serverCounts[name] > 1 ? `${name}:${r.local_port}` : name;
+        const remark = String(r.remark || '').trim() || String(r.local_port || '未备注');
+        return `${name}:${remark}`;
     });
     const values = data.top_rules.map(r => Number((r.traffic_used_bytes / (1024**3)).toFixed(2)));
 
