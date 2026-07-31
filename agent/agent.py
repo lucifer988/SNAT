@@ -687,19 +687,20 @@ def add_rule():
         if isinstance(result, bool): result={'ok':result,'stage':'legacy','rolled_back':False,'verified':result}
 
         if result['ok']:
-            # 保存到配置文件
+            # 保存到配置文件；若是重新启用/重建同端口规则，保留既有流量累计，只有删规则时才清零
             rules = load_rules()
+            existing = rules.get(str(local_port), {}) if isinstance(rules.get(str(local_port), {}), dict) else {}
             rules[str(local_port)] = {
                 'target_host': target_host,
                 'target_ip': resolved_ip,
                 'target_port': target_port,
-                'traffic_bytes': 0,
-                'last_counter': 0,
-                'traffic_limit_gb': max(0, int(data.get('traffic_limit_gb', 0) or 0))
+                'traffic_bytes': int(existing.get('traffic_bytes', 0) or 0),
+                'last_counter': int(existing.get('last_counter', 0) or 0),
+                'traffic_limit_gb': max(0, int(data.get('traffic_limit_gb', existing.get('traffic_limit_gb', 0)) or 0))
             }
             save_rules(rules)
             return jsonify({'success': True, 'target_host': target_host, 'resolved_ip': resolved_ip, 'stage': result['stage'], 'verified': result['verified']})
-        else:
+
             return jsonify({'success': False, 'error': 'iptables 命令失败', **result}), 500
 
 def get_forward_counter(port, rule=None):
@@ -764,20 +765,17 @@ def get_traffic(port):
     if str(port) not in rules:
         return jsonify({'success': True, 'bytes': current_bytes, 'current_counter': current_bytes})
 
-    historical_bytes = rules[str(port)].get('traffic_bytes', 0)
-    last_counter = rules[str(port)].get('last_counter', 0)
+    historical_bytes = int(rules[str(port)].get('traffic_bytes', 0) or 0)
+    last_counter = int(rules[str(port)].get('last_counter', 0) or 0)
 
     if current_bytes < last_counter:
         total_bytes = historical_bytes + current_bytes
-        rules[str(port)]['traffic_bytes'] = total_bytes
-        rules[str(port)]['last_counter'] = current_bytes
-        save_rules(rules)
     else:
         total_bytes = historical_bytes + (current_bytes - last_counter)
-        if current_bytes - last_counter > 1024*1024*100:
-            rules[str(port)]['traffic_bytes'] = total_bytes
-        rules[str(port)]['last_counter'] = current_bytes
-        save_rules(rules)
+
+    rules[str(port)]['traffic_bytes'] = total_bytes
+    rules[str(port)]['last_counter'] = current_bytes
+    save_rules(rules)
 
     return jsonify({'success': True, 'bytes': total_bytes, 'current_counter': current_bytes})
 
@@ -865,12 +863,41 @@ def delete_rule():
 
 @app.route('/list_rules', methods=['GET'])
 def list_rules():
-    """列出所有规则"""
+    """列出所有规则。
+
+    仅返回“配置中存在且内核规则仍在”的活动规则；已暂停规则仍保留，供面板识别为可恢复状态。
+    这样可避免 rules.json 残留导致面板误判“规则已生效”。
+    """
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
     rules = load_rules()
-    return jsonify(rules)
+    visible_rules = {}
+    for local_port, rule in rules.items():
+        if not isinstance(rule, dict):
+            continue
+        if rule.get('suspended'):
+            visible_rules[str(local_port)] = rule
+            continue
+
+        target_ip = str(rule.get('target_ip', '') or '')
+        target_port = rule.get('target_port')
+        try:
+            target_port = int(target_port)
+        except (TypeError, ValueError):
+            continue
+
+        parts = _rule_components(int(local_port), target_ip, target_port)
+        kernel_present = True
+        for _stage, check_cmd, _add_cmd in parts:
+            state, _check_error = _check_rule(check_cmd)
+            if state != 'present':
+                kernel_present = False
+                break
+        if kernel_present:
+            visible_rules[str(local_port)] = rule
+
+    return jsonify(visible_rules)
 
 @app.route('/health', methods=['GET'])
 def health():

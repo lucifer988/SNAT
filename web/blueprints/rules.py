@@ -101,6 +101,34 @@ def rules():
             conn.close()
         _app.log_event('INFO', f"规则 {rule_id} 已下发到 Agent")
 
+        verify_resp = _app.agent_get(
+            f"http://{server['host']}:{server['port']}/list_rules",
+            _app.decrypt_token(server['token']),
+            timeout=5
+        )
+        try:
+            verify_payload = verify_resp.json() or {}
+        except ValueError:
+            verify_payload = {}
+        verify_rules = verify_payload.get('rules', verify_payload) if isinstance(verify_payload, dict) else {}
+        remote_entry = verify_rules.get(str(data['local_port'])) if isinstance(verify_rules, dict) else None
+        remote_host = ''
+        if isinstance(remote_entry, dict):
+            remote_host = str(remote_entry.get('target_host', '') or remote_entry.get('target_ip', '') or '').strip()
+        desired_host = str(data.get('target_host', '') or data['target_ip'] or '').strip()
+        remote_confirmed = (
+            verify_resp.status_code == 200
+            and isinstance(remote_entry, dict)
+            and str(remote_entry.get('target_ip', '') or '') == str(data['target_ip'])
+            and int(remote_entry.get('target_port', 0) or 0) == int(data['target_port'])
+            and remote_host == desired_host
+        )
+        if not remote_confirmed:
+            _rollback_rule(rule_id)
+            _app.sync_server_rules(server['id'], log_prefix=f'[添加回滚] 服务器 {server["id"]}')
+            _app.log_event('ERROR', f"规则 {rule_id} 下发后二次确认失败，已回滚数据库: status={verify_resp.status_code}, remote={remote_entry}")
+            return jsonify({'success': False, 'error': 'Agent 二次确认失败', 'details': {'http': verify_resp.status_code, 'remote': remote_entry}}), 502
+
         sync_results = _app.sync_server_rules(server['id'], log_prefix=f'[添加] 服务器 {server["id"]}')
         failed = [item for item in sync_results if item.get('status') not in _app.SYNC_OK_STATUSES]
         if failed:
