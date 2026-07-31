@@ -1878,8 +1878,9 @@ def sync_server_rules(server_id, log_prefix=''):
         return [{'server_id': server_id, 'status': 'server_missing'}]
 
     server = dict(server_row)
-    c.execute('SELECT * FROM rules WHERE server_id = ? AND enabled = 1 ORDER BY id', (server_id,))
-    enabled_rules = [dict(r) for r in c.fetchall()]
+    c.execute('SELECT * FROM rules WHERE server_id = ? ORDER BY id', (server_id,))
+    all_rules = [dict(r) for r in c.fetchall()]
+    enabled_rules = [r for r in all_rules if r['enabled']]
     conn.close()
     over_limit_rules = [
         rule for rule in enabled_rules
@@ -1909,13 +1910,25 @@ def sync_server_rules(server_id, log_prefix=''):
     try:
         remote_payload = resp.json() or {}
     except ValueError:
-        remote_payload = {}
+        remote_payload = None
     remote_rules = remote_payload.get('rules', remote_payload) if isinstance(remote_payload, dict) else {}
+    if not isinstance(remote_payload, dict) or not isinstance(remote_rules, dict) or any(
+        not str(port).isdigit() or not isinstance(rule, dict)
+        for port, rule in remote_rules.items()
+    ):
+        _mark_rules_desynced(server_id, [r['id'] for r in desired_rules], 'list_invalid_payload')
+        return [{'server_id': server_id, 'status': 'list_invalid_payload'}]
 
     enabled_by_port = {str(rule['local_port']): rule for rule in enabled_rules}
+    disabled_by_port = {str(rule['local_port']): rule for rule in all_rules if not rule['enabled']}
     desired_by_port = {str(rule['local_port']): rule for rule in desired_rules}
     remote_by_port = {str(p): v for p, v in remote_rules.items()}
     suspended={p for p,v in remote_by_port.items() if isinstance(v,dict) and v.get('suspended')}
+    # 手动停用的规则有意保留在 Agent 上保存流量历史，不是需要清理的孤儿。
+    preserved_disabled = suspended & set(disabled_by_port)
+    for p in preserved_disabled:
+        remote_by_port.pop(p, None)
+    suspended -= preserved_disabled
     ids=[enabled_by_port[p]['id'] for p in suspended if p in enabled_by_port]
     if ids:
         conn=sqlite3.connect(DB_FILE,timeout=10); c=conn.cursor(); c.executemany('UPDATE rules SET enabled=0 WHERE id=?',[(x,) for x in ids]); conn.commit(); conn.close()

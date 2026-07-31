@@ -695,7 +695,9 @@ def add_rule():
                 'target_ip': resolved_ip,
                 'target_port': target_port,
                 'traffic_bytes': int(existing.get('traffic_bytes', 0) or 0),
-                'last_counter': int(existing.get('last_counter', 0) or 0),
+                # 暂停后重新启用会创建全新的 iptables 计数器，基线必须从 0 开始；
+                # 历史累计仍保留在 traffic_bytes 中。
+                'last_counter': 0 if existing.get('suspended') else int(existing.get('last_counter', 0) or 0),
                 'traffic_limit_gb': max(0, int(data.get('traffic_limit_gb', existing.get('traffic_limit_gb', 0)) or 0))
             }
             save_rules(rules)
@@ -740,6 +742,24 @@ def get_forward_counter(port, rule=None):
     return total_bytes
 
 
+def get_traffic_counter(port, rule=None):
+    """读取当前规则计数，兼容只有 mangle 注释计数的历史规则。"""
+    current_bytes = get_forward_counter(port, rule)
+    if current_bytes != 0:
+        return current_bytes
+    success, stdout, _ = run_cmd(['iptables', '-t', 'mangle', '-L', 'PREROUTING', '-n', '-v', '-x'])
+    if not success:
+        return 0
+    line = next((item for item in stdout.splitlines() if f'SNAT_{port}_IN' in item), '')
+    if not line:
+        return 0
+    parts = line.strip().split()
+    try:
+        return int(parts[1]) if len(parts) > 1 else 0
+    except ValueError:
+        return 0
+
+
 @app.route('/get_traffic/<int:port>', methods=['GET'])
 def get_traffic(port):
     """获取端口流量统计（优先 FORWARD 口径，兼容历史累积）"""
@@ -752,15 +772,7 @@ def get_traffic(port):
     rules = load_rules()
     rule = rules.get(str(port), {})
 
-    current_bytes = get_forward_counter(port, rule)
-    if current_bytes == 0:
-        success, stdout, _ = run_cmd(['iptables', '-t', 'mangle', '-L', 'PREROUTING', '-n', '-v', '-x'])
-        if success:
-            stdout = next((line for line in stdout.splitlines() if f'SNAT_{port}_IN' in line), '')
-            if stdout:
-                parts = stdout.strip().split()
-                if len(parts) > 1:
-                    current_bytes = int(parts[1])
+    current_bytes = get_traffic_counter(port, rule)
 
     if str(port) not in rules:
         return jsonify({'success': True, 'bytes': current_bytes, 'current_counter': current_bytes})
@@ -860,6 +872,42 @@ def delete_rule():
             save_rules(rules)
 
     return jsonify({'success': True})
+
+@app.route('/disable_rule', methods=['POST'])
+def disable_rule():
+    """停用转发但保留规则及累计流量，供后续重新启用。"""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.json
+    if not data:
+        return jsonify({'error': 'Invalid JSON'}), 400
+    local_port = data.get('local_port')
+    if not isinstance(local_port, int) or not (1 <= local_port <= 65535):
+        return jsonify({'error': 'Invalid local_port'}), 400
+
+    with STATE_LOCK:
+        rules = load_rules()
+        key = str(local_port)
+        rule = rules.get(key)
+        if not isinstance(rule, dict):
+            return jsonify({'success': True, 'verified': True, 'already': True})
+        keep = _other_rules_share_target(rules, local_port, rule['target_ip'], rule['target_port'])
+        current = get_traffic_counter(local_port, rule)
+        historical = int(rule.get('traffic_bytes', 0) or 0)
+        last = int(rule.get('last_counter', 0) or 0)
+        rule['traffic_bytes'] = historical + (current if current < last else current - last)
+        rule['last_counter'] = current
+        ok, failures = delete_snat_rule(local_port, rule['target_ip'], rule['target_port'], keep)
+        if not ok:
+            return jsonify({'success': False, 'verified': False, 'failures': failures}), 500
+        rule['suspended'] = True
+        rule['suspended_reason'] = 'manual'
+        rule.pop('suspend_pending', None)
+        rule.pop('suspend_failures', None)
+        save_rules(rules)
+
+    return jsonify({'success': True, 'verified': True, 'suspended': True})
 
 @app.route('/list_rules', methods=['GET'])
 def list_rules():

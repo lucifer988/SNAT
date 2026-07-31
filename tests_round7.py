@@ -138,6 +138,52 @@ class Round7AgentTests(unittest.TestCase):
         self.assertEqual(saved['traffic_bytes'], 987654)
         self.assertEqual(saved['last_counter'], 321)
 
+    def test_reenable_suspended_rule_resets_kernel_counter_baseline(self):
+        state = {'12345': {'target_ip': '1.2.3.4', 'target_port': 8080,
+                           'traffic_bytes': 987654, 'last_counter': 500,
+                           'suspended': True, 'suspended_reason': 'manual'}}
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'resolve_target', return_value=('1.2.3.4', '1.2.3.4')), \
+             patch.object(agentapp, 'is_target_ip_allowed', return_value=True), \
+             patch.object(agentapp, 'add_snat_rule', return_value={'ok': True, 'stage': 'done', 'verified': True}), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, 'save_rules') as save:
+            r = agentapp.app.test_client().post('/add_rule', json={
+                'local_port': 12345, 'target_ip': '1.2.3.4', 'target_port': 8080
+            })
+        self.assertEqual(r.status_code, 200)
+        saved = save.call_args.args[0]['12345']
+        self.assertEqual(saved['traffic_bytes'], 987654)
+        self.assertEqual(saved['last_counter'], 0)
+        self.assertNotIn('suspended', saved)
+
+    def test_disable_rule_removes_kernel_rules_but_keeps_traffic_history(self):
+        state = {'12345': {'target_ip': '1.2.3.4', 'target_port': 8080,
+                           'traffic_bytes': 987654, 'last_counter': 321}}
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, 'get_traffic_counter', return_value=500), \
+             patch.object(agentapp, 'delete_snat_rule', return_value=(True, [])), \
+             patch.object(agentapp, 'save_rules') as save:
+            r = agentapp.app.test_client().post('/disable_rule', json={'local_port': 12345})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()['success'])
+        saved = save.call_args.args[0]['12345']
+        self.assertTrue(saved['suspended'])
+        self.assertEqual(saved['traffic_bytes'], 987833)
+        self.assertEqual(saved['last_counter'], 500)
+
+    def test_delete_rule_removes_traffic_history_permanently(self):
+        state = {'12345': {'target_ip': '1.2.3.4', 'target_port': 8080,
+                           'traffic_bytes': 987654, 'last_counter': 321}}
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, 'delete_snat_rule', return_value=(True, [])), \
+             patch.object(agentapp, 'save_rules') as save:
+            r = agentapp.app.test_client().post('/delete_rule', json={'local_port': 12345})
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('12345', save.call_args.args[0])
+
     def test_list_rules_hides_phantom_active_rule_missing_kernel_state(self):
         state = {
             '12345': {'target_ip': '1.2.3.4', 'target_port': 8080},
@@ -216,6 +262,97 @@ class Round7WebTests(unittest.TestCase):
             r = self.client.post('/api/rules/bulk', json={'action':'disable','rule_ids':[rid]},
                                  headers={'X-CSRF-Token':'csrf'})
         self.assertEqual(len(r.get_json()['failed']), 1)
+        conn = sqlite3.connect(webapp.DB_FILE)
+        enabled, status = conn.execute('SELECT enabled,status FROM rules WHERE id=?', (rid,)).fetchone()
+        conn.close()
+        self.assertEqual(enabled, 1)
+        self.assertEqual(status, 'desynced')
+
+    def test_single_disable_uses_non_destructive_agent_endpoint(self):
+        sid = self._server()
+        conn = sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO rules(server_id,local_port,target_ip,target_port,enabled) VALUES(?,12345,'1.2.3.4',80,1)", (sid,))
+        rid = c.lastrowid; conn.commit(); conn.close()
+
+        class Resp:
+            status_code = 200
+            def json(self): return {'success': True, 'verified': True}
+
+        calls = []
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            return Resp()
+
+        with patch.object(webapp, 'agent_post', side_effect=fake_post), \
+             patch.object(webapp, 'sync_server_rules', return_value=[]):
+            r = self.client.post(f'/api/rules/{rid}/toggle', json={},
+                                 headers={'X-CSRF-Token':'csrf'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()['enabled'], 0)
+        self.assertTrue(any(url.endswith('/disable_rule') for url in calls))
+        self.assertFalse(any(url.endswith('/delete_rule') for url in calls))
+
+    def test_bulk_disable_uses_non_destructive_agent_endpoint(self):
+        sid = self._server()
+        conn = sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO rules(server_id,local_port,target_ip,target_port,enabled) VALUES(?,12345,'1.2.3.4',80,1)", (sid,))
+        rid = c.lastrowid; conn.commit(); conn.close()
+
+        class Resp:
+            status_code = 200
+            def json(self): return {'success': True, 'verified': True}
+
+        calls = []
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            return Resp()
+
+        with patch.object(webapp, 'agent_post', side_effect=fake_post):
+            r = self.client.post('/api/rules/bulk', json={'action':'disable','rule_ids':[rid]},
+                                 headers={'X-CSRF-Token':'csrf'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()['failed'], [])
+        self.assertTrue(any(url.endswith('/disable_rule') for url in calls))
+        self.assertFalse(any(url.endswith('/delete_rule') for url in calls))
+
+    def test_sync_preserves_disabled_remote_suspended_history(self):
+        sid = self._server()
+        conn = sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO rules(server_id,local_port,target_ip,target_port,enabled) VALUES(?,12345,'1.2.3.4',80,0)", (sid,))
+        conn.commit(); conn.close()
+
+        class GetResp:
+            status_code = 200
+            def json(self):
+                return {'12345': {'target_ip':'1.2.3.4','target_port':80,
+                                  'traffic_bytes':987654,'last_counter':500,
+                                  'suspended':True,'suspended_reason':'manual'}}
+
+        with patch.object(webapp, 'agent_get', return_value=GetResp()), \
+             patch.object(webapp, 'agent_post') as post:
+            result = webapp.sync_server_rules(sid)
+        self.assertEqual(result, [])
+        post.assert_not_called()
+
+    def test_sync_invalid_remote_payload_fails_closed(self):
+        sid = self._server()
+        conn = sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO rules(server_id,local_port,target_ip,target_port,enabled) VALUES(?,12345,'1.2.3.4',80,1)", (sid,))
+        rid = c.lastrowid; conn.commit(); conn.close()
+
+        class GetResp:
+            status_code = 200
+            def json(self): return {'success': True}
+
+        with patch.object(webapp, 'agent_get', return_value=GetResp()), \
+             patch.object(webapp, 'agent_post') as post:
+            result = webapp.sync_server_rules(sid)
+        self.assertEqual(result[0]['status'], 'list_invalid_payload')
+        post.assert_not_called()
         conn = sqlite3.connect(webapp.DB_FILE)
         enabled, status = conn.execute('SELECT enabled,status FROM rules WHERE id=?', (rid,)).fetchone()
         conn.close()

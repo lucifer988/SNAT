@@ -359,7 +359,7 @@ def toggle_rule(rule_id):
     _app.log_event('INFO', f"切换规则 {rule_id}: {rule['enabled']} -> {new_enabled}")
 
     try:
-        action = 'add_rule' if new_enabled else 'delete_rule'
+        action = 'add_rule' if new_enabled else 'disable_rule'
         if action == 'add_rule':
             payload = {
                 'local_port': rule['local_port'],
@@ -461,11 +461,14 @@ def bulk_rules():
                 resp=_app.agent_post(f"http://{rule['host']}:{rule['port']}/add_rule",token,{'local_port':rule['local_port'],'target_ip':rule['target_ip'],'target_host':rule.get('target_host') or rule['target_ip'],'target_port':rule['target_port'],'traffic_limit_gb':int(rule.get('traffic_limit_gb',0) or 0)},timeout=5)
                 if confirmed(resp): c.execute("UPDATE rules SET enabled=1,status='active' WHERE id=?",(rule['id'],))
                 else: raise RuntimeError(f'Agent 未确认启用 HTTP {resp.status_code}')
-            elif action in ('disable','delete'):
+            elif action == 'disable':
+                resp=_app.agent_post(f"http://{rule['host']}:{rule['port']}/disable_rule",token,{'local_port':rule['local_port']},timeout=5)
+                if confirmed(resp): c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?",(rule['id'],))
+                else: raise RuntimeError(f'Agent 未确认停用 HTTP {resp.status_code}')
+            elif action == 'delete':
                 resp=_app.agent_post(f"http://{rule['host']}:{rule['port']}/delete_rule",token,{'local_port':rule['local_port']},timeout=5)
-                if not confirmed(resp): raise RuntimeError(f'Agent 未确认删除 HTTP {resp.status_code}')
-                if action=='disable': c.execute("UPDATE rules SET enabled=0,status='active' WHERE id=?",(rule['id'],))
-                else: c.execute('DELETE FROM rules WHERE id=?',(rule['id'],))
+                if confirmed(resp): c.execute('DELETE FROM rules WHERE id=?',(rule['id'],))
+                else: raise RuntimeError(f'Agent 未确认删除 HTTP {resp.status_code}')
             else:
                 conn.close(); return jsonify({'success':False,'error':'不支持的 action'}),400
             affected.append(rule['id'])
