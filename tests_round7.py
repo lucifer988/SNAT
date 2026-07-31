@@ -108,6 +108,50 @@ class Round7AgentTests(unittest.TestCase):
         self.assertFalse(saved.get('suspended', False))
         self.assertTrue(saved['suspend_pending'])
 
+    def test_get_traffic_keeps_reported_total_when_counter_stops_growing(self):
+        state = {'12345': {'target_ip': '1.2.3.4', 'target_port': 8080, 'traffic_bytes': 0, 'last_counter': 0}}
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, 'save_rules'):
+            with patch.object(agentapp, 'get_forward_counter', side_effect=[4096, 4096]):
+                client = agentapp.app.test_client()
+                first = client.get('/get_traffic/12345')
+                second = client.get('/get_traffic/12345')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.get_json()['bytes'], 4096)
+        self.assertEqual(second.get_json()['bytes'], 4096)
+
+    def test_reenable_rule_preserves_existing_traffic_history(self):
+        state = {'12345': {'target_ip': '1.2.3.4', 'target_port': 8080, 'traffic_bytes': 987654, 'last_counter': 321}}
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'resolve_target', return_value=('1.2.3.4', '1.2.3.4')), \
+             patch.object(agentapp, 'is_target_ip_allowed', return_value=True), \
+             patch.object(agentapp, 'add_snat_rule', return_value={'ok': True, 'stage': 'done', 'verified': True}), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, 'save_rules') as save:
+            r = agentapp.app.test_client().post('/add_rule', json={
+                'local_port': 12345, 'target_ip': '1.2.3.4', 'target_port': 8080, 'traffic_limit_gb': 0
+            })
+        self.assertEqual(r.status_code, 200)
+        saved = save.call_args.args[0]['12345']
+        self.assertEqual(saved['traffic_bytes'], 987654)
+        self.assertEqual(saved['last_counter'], 321)
+
+    def test_list_rules_hides_phantom_active_rule_missing_kernel_state(self):
+        state = {
+            '12345': {'target_ip': '1.2.3.4', 'target_port': 8080},
+            '23456': {'target_ip': '2.2.2.2', 'target_port': 9090, 'suspended': True},
+        }
+        with patch.object(agentapp, 'check_auth', return_value=True), \
+             patch.object(agentapp, 'load_rules', return_value=state), \
+             patch.object(agentapp, '_check_rule', side_effect=[('absent', ''), ('present', '')]):
+            r = agentapp.app.test_client().get('/list_rules')
+        self.assertEqual(r.status_code, 200)
+        payload = r.get_json()
+        self.assertNotIn('12345', payload)
+        self.assertIn('23456', payload)
+
 
 class Round7WebTests(unittest.TestCase):
     def setUp(self):

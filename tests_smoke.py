@@ -181,6 +181,53 @@ class SmokeTest(unittest.TestCase):
         conn.close()
         self.assertEqual(count, 0)
 
+    def test_create_rule_rolls_back_when_agent_second_check_cannot_confirm(self):
+        self.login_web()
+        server_id = self.insert_server(host='10.0.0.8', token='panel-token')
+
+        class AddResp:
+            status_code = 200
+            def json(self):
+                return {'success': True, 'resolved_ip': '1.2.3.4', 'target_host': '1.2.3.4'}
+
+        class ListResp:
+            status_code = 200
+            def json(self):
+                return {'success': True, 'rules': {}}
+
+        post_calls = []
+
+        def fake_post(url, data=None, json=None, headers=None, timeout=None, **_kw):
+            payload = json if json is not None else __import__('json').loads(data.decode() if isinstance(data, (bytes, bytearray)) else data)
+            post_calls.append((url, payload))
+            return AddResp()
+
+        with patch('web.app.requests.post', side_effect=fake_post), \
+             patch('web.app.requests.get', return_value=ListResp()):
+            r = self.web_client.post(
+                '/api/rules',
+                json={
+                    'csrf_token': 'test-csrf-token',
+                    'server_id': server_id,
+                    'local_port': 12345,
+                    'target_ip': '1.2.3.4',
+                    'target_port': 8080,
+                    'note': 'case'
+                },
+                headers={'X-CSRF-Token': 'test-csrf-token'}
+            )
+
+        self.assertEqual(r.status_code, 502)
+        self.assertIn('Agent 二次确认失败', r.get_json()['error'])
+        conn = webapp.sqlite3.connect(webapp.DB_FILE)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM rules WHERE local_port = 12345')
+        count = c.fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 0)
+        add_calls = [payload for url, payload in post_calls if url.endswith('/add_rule')]
+        self.assertEqual(len(add_calls), 1)
+
     def test_sync_server_rules_reconciles_remote_state(self):
         server_id = self.insert_server(host='10.0.0.9', token='panel-token')
         conn = webapp.sqlite3.connect(webapp.DB_FILE)
