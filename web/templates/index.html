@@ -417,11 +417,11 @@
         th, td { padding: 14px 16px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06); white-space: nowrap; }
         td.cell { overflow: hidden; text-overflow: ellipsis; }
 
-        /* 服务器列表：五列的表头和内容全部居中，完整显示文字，不使用省略号。
+        /* 服务器列表：七列的表头和内容全部居中，完整显示文字，不使用省略号。
            小屏宽度不足时由 .table-wrap 横向滚动，不压缩/截断字段。 */
         #serversTable {
             table-layout: auto;
-            min-width: 760px;
+            min-width: 812px;
         }
         #serversTable th,
         #serversTable td {
@@ -432,12 +432,17 @@
             text-overflow: clip;
             overflow-wrap: anywhere;
         }
-        #serversTable th:nth-child(1), #serversTable td:nth-child(1) { min-width: 72px; }
-        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 120px; }
-        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 132px; }
-        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 72px; }
-        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 88px; }
-        #serversTable th:nth-child(6), #serversTable td:nth-child(6) { min-width: 168px; }
+        /* 第 1 列：三横线拖动把手专用列，收窄内边距，只放得下把手 */
+        #serversTable th.col-sort,
+        #serversTable td:nth-child(1) { width: 56px; min-width: 56px; padding-left: 8px; padding-right: 8px; }
+        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 72px; }
+        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 120px; }
+        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 132px; }
+        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 72px; }
+        #serversTable th:nth-child(6), #serversTable td:nth-child(6) { min-width: 88px; }
+        #serversTable th:nth-child(7), #serversTable td:nth-child(7) { min-width: 168px; }
+        /* 把手独立成列后不再需要跟随编号时的右间距，保持列内居中 */
+        #serversTable .server-drag-handle { margin-right: 0; }
         #serversTable .action-group {
             justify-content: center;
             flex-wrap: nowrap;
@@ -1714,6 +1719,7 @@
             <div class="table-wrap"><table id="serversTable">
                 <thead>
                     <tr>
+                        <th class="col-sort">排序</th>
                         <th>编号</th>
                         <th>名称</th>
                         <th>地址</th>

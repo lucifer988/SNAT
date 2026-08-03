@@ -183,7 +183,8 @@ function renderServers() {
         const label = s.status === 'token_invalid' ? 'token异常' : s.status;
         return `
         <tr data-server-id="${s.id}" class="sortable-server-row">
-            <td data-label="排序/编号"><span class="drag-handle server-drag-handle" title="按住三横线拖动服务器" aria-label="拖动服务器排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span><span>${esc(s.display_id || s.id)}</span></td>
+            <td data-label="排序"><span class="drag-handle server-drag-handle" title="按住三横线拖动服务器" aria-label="拖动服务器排序"><span class="drag-grip-lines" aria-hidden="true"><i></i><i></i><i></i></span></span></td>
+            <td data-label="编号">${esc(s.display_id || s.id)}</td>
             <td data-label="名称">${esc(s.name)}</td>
             <td data-label="地址">${esc(s.host)}</td>
             <td data-label="端口">${s.port}</td>
