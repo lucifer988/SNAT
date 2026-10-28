@@ -1,0 +1,2044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SNAT 转发管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif; 
+            padding: 20px; 
+            background: radial-gradient(circle at top right, #1e1b4b, #0f172a 60%);
+            color: #f8fafc;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* 雪花效果 */
+        .snowflake {
+            position: fixed;
+            top: -10px;
+            color: #38bdf8;
+            font-size: 1.5em;
+            pointer-events: none;
+            z-index: 1000;
+            animation: fall linear infinite;
+            text-shadow: 0 0 5px rgba(255,255,255,0.8);
+        }
+        
+        @keyframes fall {
+            to { transform: translateY(100vh) rotate(360deg); }
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding-bottom: env(safe-area-inset-bottom, 0);
+        }
+        h1 { 
+            margin-bottom: 20px; 
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: none;
+        }
+        .section {
+            background: rgba(22, 30, 49, 0.65);
+            padding: 24px;
+            margin: 0 auto 24px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            animation: slideIn 0.5s ease;
+            max-width: 1400px;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+            body { padding: 8px; font-size: 14px; }
+
+            .page-header-row {
+                gap: 8px;
+                margin-bottom: 10px;
+                flex-direction: column;
+                align-items: center;
+            }
+            .header-title {
+                font-size: 16px;
+                line-height: 1.2;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                width: 100%;
+                text-align: center;
+            }
+            
+            /* 头部按钮组：单独第二排，居中 */
+            .header-actions {
+                width: 100%;
+                flex-wrap: nowrap;
+                gap: 4px !important;
+                justify-content: center;
+                align-items: center;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            .header-actions::-webkit-scrollbar { display: none; }
+            .header-actions label,
+            .header-actions button {
+                font-size: 11px;
+                padding: 6px 8px;
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
+            
+            /* Section 优化 */
+            .section { 
+                padding: 12px; 
+                margin-bottom: 12px; 
+                border-radius: 15px;
+            }
+            .section h2 { 
+                font-size: 15px; 
+                margin-bottom: 10px;
+                justify-content: flex-start;
+            }
+            .section h2::before { display: none; }
+            
+            /* 服务器表格 - 卡片式布局 */
+            #serversTable thead { display: none; }
+            #serversTable tbody tr {
+                display: block;
+                background: #f8f9fa;
+                margin-bottom: 10px;
+                padding: 12px;
+                border-radius: 10px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            #serversTable tbody td {
+                display: flex;
+                justify-content: space-between;
+                padding: 6px 0;
+                border-bottom: 1px solid #eee;
+                text-align: left;
+            }
+            #serversTable tbody td::before {
+                content: attr(data-label);
+                font-weight: 600;
+                color: #667eea;
+                min-width: 60px;
+            }
+            #serversTable tbody td:last-child {
+                border-bottom: none;
+                display: flex !important;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                padding-top: 8px;
+                width: 100%;
+            }
+            #serversTable tbody td:last-child::before { display: none; }
+            #serversTable tbody td:last-child .action-group {
+                width: 100%;
+                display: flex !important;
+                flex-wrap: nowrap;
+                justify-content: center !important;
+                align-items: center;
+                gap: 6px;
+                margin: 0 auto;
+            }
+            #serversTable tbody td:last-child .action-group button { flex: 0 0 auto; }
+            
+            /* 规则表格 - 卡片式 */
+            #rulesTable { display: none; }
+            #rulesList { display: block; }
+            
+            .rule-card {
+                background: #fff;
+                margin-bottom: 12px;
+                padding: 12px;
+                border-radius: 12px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                border: 1px solid #e5e7eb;
+            }
+            .rule-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+                padding-bottom: 8px;
+                border-bottom: 1px solid #f0f0f0;
+            }
+            .rule-card-title {
+                font-weight: 600;
+                color: #1f2937;
+                font-size: 15px;
+            }
+            .rule-card-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 4px 0;
+                font-size: 13px;
+            }
+            .rule-card-label { color: #6b7280; }
+            .rule-card-value { color: #1f2937; font-weight: 500; text-align: right; }
+            .rule-card-actions {
+                display: flex;
+                gap: 6px;
+                margin-top: 10px;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            /* 按钮优化 - 增大触控区域 */
+            button { 
+                padding: 10px 14px; 
+                font-size: 13px;
+                min-height: 36px;
+                min-width: 44px;
+            }
+            .action-group { justify-content: center; flex-wrap: nowrap; }
+            
+            /* 输入框优化 - 防止缩放 */
+            input, select, textarea { 
+                font-size: 16px;
+                padding: 10px 12px;
+                border-radius: 10px;
+                -webkit-text-size-adjust: 100%;
+            }
+            input[type="checkbox"] { width: 20px; height: 20px; }
+            
+            /* 搜索框 - 移动端全宽 */
+            #ruleSearch {
+                width: 100% !important;
+                max-width: none !important;
+                margin-bottom: 10px;
+            }
+            
+            /* 告警区域 - 彻底重排按钮 */
+            .section:has(#tgBotToken) > div {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                align-items: stretch;
+            }
+            .section:has(#tgBotToken) input {
+                max-width: 100% !important;
+                width: 100% !important;
+                display: block !important;
+            }
+            .section:has(#tgBotToken) button {
+                width: 100%;
+                max-width: 100%;
+            }
+            .section:has(#tgBotToken) div[style*="text-align:center"] {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .section:has(#tgBotToken) div[style*="text-align:center"] button {
+                flex: none;
+                max-width: 100%;
+                width: 100%;
+            }
+            
+            /* 模态框优化 - 全屏抽屉式 */
+            .modal-content { 
+                width: 100%;
+                margin: 0;
+                padding: 16px;
+                border-radius: 0;
+                max-height: 100vh;
+                height: 100vh;
+                overflow-y: auto;
+                position: relative;
+                /* 底部留出按钮安全区，防止被虚拟键盘遮挡 */
+                padding-bottom: max(16px, calc(60px + env(safe-area-inset-bottom, 0)));
+            }
+            .modal-header { 
+                padding-bottom: 10px;
+                margin-bottom: 15px;
+                position: sticky;
+                top: 0;
+                background: #fff;
+                z-index: 1;
+            }
+            .modal-header h2 { font-size: 18px; }
+            .close { font-size: 28px; }
+            .modal { align-items: flex-end; }
+            
+            /* 模态框底部操作按钮固定 */
+            .modal-actions {
+                position: sticky;
+                bottom: 0;
+                background: #fff;
+                padding: 12px 0 4px;
+                margin-top: 16px;
+                border-top: 1px solid #f0f0f0;
+                display: flex;
+                gap: 8px;
+                justify-content: center;
+            }
+            .modal-actions button {
+                flex: 1;
+                max-width: 45%;
+                min-height: 44px;
+                font-size: 14px;
+                margin: 0;
+            }
+            
+            /* 告警与恢复 - 按钮换行 */
+            .section > div[style*="text-align:center"] {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                justify-content: center;
+            }
+            .section > div[style*="text-align:center"] button {
+                flex: 1 1 calc(50% - 6px);
+                max-width: calc(50% - 6px);
+            }
+            
+            .form-group { margin-bottom: 14px; }
+            .form-group label { font-size: 14px; margin-bottom: 6px; }
+            
+            /* 流量概览 */
+            #trafficSummary { font-size: 12px; }
+            #trafficSummary span { word-break: break-all; }
+            
+            /* 保留雪花 + 粒子特效（用户保留） */
+            
+            /* 隐藏次要信息列 */
+            .col-traffic, .col-created { display: none; }
+            
+            /* 强制HTTPS复选框 */
+            #forceHttpsTop { width: 18px; height: 18px; }
+            
+            /* 底部快捷操作栏 */
+            .mobile-bottom-bar {
+                display: flex;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                background: rgba(255,255,255,0.97);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border-top: 1px solid #e5e7eb;
+                padding: 8px 12px;
+                padding-bottom: calc(8px + env(safe-area-inset-bottom, 0));
+                z-index: 999;
+                gap: 4px;
+                justify-content: space-around;
+                box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+            }
+            .mobile-bottom-bar button {
+                flex: 1;
+                padding: 8px 4px;
+                font-size: 11px;
+                min-height: 44px;
+                border-radius: 10px;
+                margin: 0;
+                min-width: 0;
+            }
+            .mobile-bottom-bar button span {
+                display: block;
+                font-size: 18px;
+                margin-bottom: 2px;
+            }
+            
+            /* 键盘弹出时底部栏不挡内容 */
+            body.keyboard-open .mobile-bottom-bar {
+                display: none;
+            }
+            
+            /* padding-bottom 为底部栏留空间 */
+            .container {
+                /* 5 个底部快捷按钮在窄屏上会形成更高的固定栏；留足余量，避免最后一屏内容被遮住。 */
+                padding-bottom: calc(104px + env(safe-area-inset-bottom, 0));
+            }
+            
+            /* 导入导出区域按钮也重排 */
+            .section:has(#auditContent) > div[style*="text-align:center"] {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .section:has(#auditContent) > div[style*="text-align:center"] button {
+                width: 100%;
+                max-width: 100%;
+                flex: none;
+            }
+        }
+        
+        /* 默认隐藏底部栏（桌面端） */
+        .mobile-bottom-bar { display: none; }
+        
+        /* 平板端横屏 */
+        @media (min-width: 481px) and (max-width: 768px) {
+            .section > div[style*="text-align:center"] button {
+                flex: 1 1 calc(33% - 6px);
+                max-width: calc(33% - 6px);
+            }
+        }
+        
+        .section h2 {
+            font-size: 18px;
+            color: #38bdf8;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 10px;
+            justify-content: flex-start;
+        }
+        .section h2::before {
+            content: '◈';
+            margin-right: 0;
+            font-size: 14px;
+            color: #818cf8;
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; table-layout: fixed; }
+        #rulesTable { table-layout: auto; min-width: 1320px; display: table; }
+        #rulesList { display: none; }
+        #rulesTable td:nth-child(8), #rulesTable th.col-traffic { white-space: nowrap; overflow: visible; }
+        #rulesTable th:nth-child(8), #rulesTable td:nth-child(8) { width: 260px; min-width: 260px; }
+        th, td { padding: 14px 16px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06); white-space: nowrap; }
+        td.cell { overflow: hidden; text-overflow: ellipsis; }
+
+        /* 服务器列表：七列的表头和内容全部居中，完整显示文字，不使用省略号。
+           小屏宽度不足时由 .table-wrap 横向滚动，不压缩/截断字段。 */
+        #serversTable {
+            table-layout: auto;
+            min-width: 812px;
+        }
+        #serversTable th,
+        #serversTable td {
+            text-align: center;
+            vertical-align: middle;
+            white-space: normal;
+            overflow: visible;
+            text-overflow: clip;
+            overflow-wrap: anywhere;
+        }
+        /* 第 1 列：三横线拖动把手专用列，收窄内边距，只放得下把手 */
+        #serversTable th.col-sort,
+        #serversTable td:nth-child(1) { width: 56px; min-width: 56px; padding-left: 8px; padding-right: 8px; }
+        #serversTable th:nth-child(2), #serversTable td:nth-child(2) { min-width: 72px; }
+        #serversTable th:nth-child(3), #serversTable td:nth-child(3) { min-width: 120px; }
+        #serversTable th:nth-child(4), #serversTable td:nth-child(4) { min-width: 132px; }
+        #serversTable th:nth-child(5), #serversTable td:nth-child(5) { min-width: 72px; }
+        #serversTable th:nth-child(6), #serversTable td:nth-child(6) { min-width: 88px; }
+        #serversTable th:nth-child(7), #serversTable td:nth-child(7) { min-width: 168px; }
+        /* 把手独立成列后不再需要跟随编号时的右间距，保持列内居中 */
+        #serversTable .server-drag-handle { margin-right: 0; }
+        #serversTable .action-group {
+            justify-content: center;
+            flex-wrap: nowrap;
+        }
+        #serversTable .action-group button { white-space: nowrap; }
+        @media (max-width: 768px) {
+            /* 服务器列表在手机端也保留真实表格/表头；空间不足横向滚动，避免卡片布局把标题藏掉。 */
+            #serversTable thead { display: table-header-group; }
+            #serversTable tbody { display: table-row-group; }
+            #serversTable tbody tr {
+                display: table-row;
+                background: transparent;
+                margin: 0;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+            }
+            #serversTable tbody td {
+                display: table-cell;
+                padding: 12px 10px;
+                text-align: center;
+                border-bottom: 1px solid rgba(255,255,255,0.06);
+            }
+            #serversTable tbody td::before { display: none; }
+        }
+        th {
+            background: rgba(255,255,255,0.03);
+            color: #94a3b8;
+            font-weight: 600;
+            border: none;
+        }
+        th:first-child { border-radius: 12px 0 0 0; }
+        th:last-child { border-radius: 0 12px 0 0; }
+        tr:hover { background: rgba(255,255,255,0.02); transition: all 0.2s; }
+        button {
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            box-shadow: none;
+            font-size: 13px;
+            margin: 0 3px;
+            color: #172033;
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd);
+        }
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.16);
+            background: rgba(255,255,255,0.12);
+        }
+        .btn-primary { background: linear-gradient(135deg, #f9a8d4, #c4b5fd); color: #172033; border: none; }
+        .btn-danger { background: linear-gradient(135deg, #fda4af, #fdba74); color: #172033; border: none; }
+        .btn-success { background: linear-gradient(135deg, #99f6e4, #93c5fd); color: #172033; border: none; }
+        input, select, textarea {
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            width: 100%;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            background: rgba(0,0,0,0.2);
+            color: #f8fafc;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+        }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+            color: #555;
+        }
+        .modal { 
+            display: none; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .modal-content { 
+            background: white; 
+            margin: 50px auto; 
+            padding: 35px; 
+            width: 90%; 
+            max-width: 500px; 
+            border-radius: 25px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: slideDown 0.3s;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .modal-header h2 {
+            color: #667eea;
+            margin: 0;
+        }
+        .close { 
+            font-size: 32px; 
+            cursor: pointer;
+            color: #999;
+            transition: all 0.3s;
+        }
+        .close:hover { 
+            color: #f5576c;
+            transform: rotate(90deg);
+        }
+        .status-online { color: #10b981; font-weight: 700; }
+        .status-offline { color: #ef4444; font-weight: 700; }
+        .status-token_invalid { color: #f59e0b; font-weight: 700; }
+        .status-online::before, .status-offline::before, .status-token_invalid::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin-right: 6px;
+            border-radius: 50%;
+            vertical-align: middle;
+        }
+        .status-online::before { background: #10b981; box-shadow: 0 0 8px #10b981; animation: pulse 2s infinite; }
+        .status-offline::before { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .status-token_invalid::before { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+        .page-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            min-width: 0;
+        }
+        .header-title {
+            margin-bottom: 0;
+            flex: 1 1 auto;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: nowrap;
+            flex: 0 0 auto;
+        }
+        .traffic-bar {
+            width: 100%;
+            height: 8px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .traffic-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            transition: width 0.3s;
+        }
+        .action-group {
+            display: flex;
+            gap: 4px;
+            flex-wrap: nowrap;
+            align-items: center;
+        }
+        .nowrap { white-space: nowrap; }
+        .col-server { width: 110px; }
+        .col-remark { width: 80px; }
+        .col-created { width: 84px; }
+        .col-ip { width: 140px; }
+        .col-port { width: 90px; }
+        .col-status { width: 64px; min-width: 64px; max-width: 64px; }
+        .col-actions { width: 150px; text-align:center; }
+        .col-select { width: 48px; min-width: 48px; max-width: 48px; text-align: center; }
+        #rulesTable th.col-select, #rulesTable td:first-child { width: 48px; min-width: 48px; max-width: 48px; padding-left: 8px; padding-right: 8px; text-align: center; overflow: visible; }
+        #rulesTable input[type="checkbox"] { width: 16px; height: 16px; vertical-align: middle; display: inline-block; }
+        .col-traffic { width: 180px; min-width: 180px; }
+        .section h2 { text-align: center; margin-bottom: 12px; }
+        .status-online{color:#10b981;font-weight:700}.status-warning{color:#f59e0b;font-weight:700}.status-error{color:#ef4444;font-weight:700}.status-offline{color:#6b7280;font-weight:700}
+        
+        /* Toast 移动端优化 - 显示在底部中央 */
+        @media (max-width: 768px) {
+            .toast { top: auto !important; bottom: 80px !important; right: 12px !important; left: 12px !important; max-width: 100% !important; }
+        }
+        
+        /* 搜索框移动端优化 */
+        @media (max-width: 768px) {
+            #ruleSearch {
+                background: #fff;
+                border: 2px solid #e5e7eb;
+                box-shadow: 0 2px 8px rgba(102,126,234,0.1);
+                transition: border-color 0.3s, box-shadow 0.3s;
+            }
+            #ruleSearch:focus {
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102,126,234,0.2);
+            }
+            
+            /* 移动端规则：操作按钮扩大触控区并置于最上层，避免被卡片/波纹层挡住。 */
+            .tree-rule-actions { margin-top: 2px; padding-top: 2px; }
+            .tree-rule-actions button {
+                position: relative;
+                z-index: 2;
+                pointer-events: auto;
+                min-width: 64px;
+                min-height: 44px;
+                padding: 10px 14px;
+            }
+            .tree-rule input[type="checkbox"],
+            .tree-server-header input[type="checkbox"] {
+                position: relative;
+                z-index: 3;
+                pointer-events: auto;
+            }
+            button::after { pointer-events: none; }
+
+            /* 规则卡片中的文字下移一点，给顶部复选框和主行留触控空间。 */
+            #serversTable tbody tr { cursor: pointer; transition: box-shadow 0.2s; }
+            #serversTable tbody tr:active { box-shadow: 0 4px 12px rgba(102,126,234,0.2); }
+            
+            /* 标题区移动端固定 */
+            .page-header { position: sticky; top: 0; z-index: 100; background: transparent; padding: 8px 0; backdrop-filter: blur(8px); }
+            
+            /* 告警提示框移动端底部 */
+            #alertBox { top: auto !important; bottom: 80px !important; right: 12px !important; left: 12px !important; }
+            
+            /* 按钮点击波纹效果 */
+            button { position: relative; overflow: hidden; }
+            button::after {
+                content: '';
+                position: absolute;
+                top: 50%; left: 50%;
+                width: 0; height: 0;
+                background: rgba(255,255,255,0.25);
+                border-radius: 50%;
+                transform: translate(-50%, -50%);
+                transition: width 0.4s, height 0.4s;
+            }
+            button:active::after { width: 200px; height: 200px; }
+            
+            /* 表格横向滚动提示 */
+            .table-wrap { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; touch-action: pan-x; width: 100%; max-width: 100%; }
+        .table-wrap > table { margin-top: 0; }
+            
+            /* 空状态优化 */
+            .empty-state {
+                text-align: center;
+                padding: 40px 20px;
+                color: #9ca3af;
+            }
+            .empty-state-icon { font-size: 48px; margin-bottom: 12px; }
+            .empty-state-text { font-size: 14px; }
+            
+            /* 状态标签更醒目 */
+            .status-online { color: #10b981 !important; }
+            .status-offline { color: #6b7280 !important; }
+            .status-token_invalid { color: #f59e0b !important; }
+            .status-warning { color: #f59e0b !important; }
+            .status-error { color: #ef4444 !important; }
+            
+/* 连接数徽章 */
+        .conn-badge {
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd);
+            color: #172033;
+            border-radius: 12px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        /* 服务器分组样式 */
+        .server-group { margin-bottom: 12px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .server-group-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: linear-gradient(135deg, #bae6fd 0%, #c4b5fd 100%); color: #172033; cursor: pointer; font-weight: 600; border-radius: 12px 12px 0 0; }
+        .server-group-title { font-size: 15px; }
+        .server-group-count { font-size: 12px; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; }
+        .server-group-arrow { transition: transform 0.3s; }
+        .server-group-content { background: #fff; padding: 8px; border-radius: 0 0 12px 12px; }
+
+        /* 树形规则列表样式 */
+        .tree-server { margin-bottom: 10px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); background: #fff; }
+        .tree-server-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, #bae6fd 0%, #c4b5fd 100%); color: #172033; cursor: pointer; font-weight: 600; }
+        .tree-server-icon { font-size: 20px; color: #fbcfe8; text-shadow: 0 0 8px #f9a8d4; }
+        .tree-server-name { flex: 1; font-size: 15px; color: #67e8f9; font-weight: 800; text-shadow: 0 0 10px rgba(34,211,238,.35); }
+        .tree-server-count { font-size: 12px; background: rgba(255,255,255,0.25); padding: 3px 10px; border-radius: 12px; }
+        .tree-arrow { font-size: 12px; transition: transform 0.3s; }
+        .tree-server-header.expanded .tree-arrow { transform: rotate(180deg); }
+        .tree-server-rules { display: none; padding: 8px; background: #f8f9fa; }
+        .tree-server-rules.expanded { display: block; }
+        .tree-rule { padding: 12px; margin-bottom: 8px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border-left: 4px solid #667eea; transition: box-shadow 0.2s, transform 0.15s; }
+        .tree-rule:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); transform: translateX(2px); }
+        .tree-rule:last-child { margin-bottom: 0; }
+        .tree-rule-main { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-top: 4px; flex-wrap: wrap; }
+        .tree-rule-id {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 52px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(59,130,246,.14);
+            border: 1px solid rgba(59,130,246,.28);
+            color: #38bdf8;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: .2px;
+            flex: 0 0 auto;
+        }
+        .tree-rule-port { color: #667eea; font-size: 16px; font-weight: 700; }
+        .tree-rule-arrow { color: #999; }
+        .tree-rule-target { color: #333; flex: 1; min-width: 180px; }
+        .tree-rule-status-group {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-left: auto;
+            justify-content: flex-end;
+        }
+        .tree-rule-status {
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            border: 1px solid transparent;
+        }
+        .tree-rule-status.enabled { background: rgba(16,185,129,.14); color: #059669; border-color: rgba(16,185,129,.22); }
+        .tree-rule-status.disabled { background: rgba(148,163,184,.16); color: #475569; border-color: rgba(148,163,184,.22); }
+        .tree-rule-status.synced { background: rgba(59,130,246,.12); color: #2563eb; border-color: rgba(59,130,246,.22); }
+        .tree-rule-status.warning { background: rgba(245,158,11,.16); color: #b45309; border-color: rgba(245,158,11,.24); }
+        .tree-rule-status.danger { background: rgba(239,68,68,.14); color: #dc2626; border-color: rgba(239,68,68,.22); }
+        .tree-rule-status.muted { background: rgba(226,232,240,.7); color: #64748b; border-color: rgba(203,213,225,.9); }
+        .tree-rule-status-text { font-weight: 700; color: #334155; }
+        .tree-rule-info { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: #666; }
+        .tree-rule-info .conn-high { color: #f59e0b; font-weight: 600; }
+        .tree-rule-info .conn-full { color: #ef4444; font-weight: 700; }
+        .reconcile-result {
+            display: grid;
+            gap: 8px;
+            margin: 12px 0 10px;
+        }
+        .reconcile-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(148,163,184,.18);
+            background: rgba(255,255,255,.74);
+            color: #334155;
+        }
+        .reconcile-item.ok { border-color: rgba(16,185,129,.24); background: rgba(236,253,245,.9); }
+        .reconcile-item.warning { border-color: rgba(245,158,11,.28); background: rgba(255,251,235,.92); }
+        .reconcile-item.error { border-color: rgba(239,68,68,.24); background: rgba(254,242,242,.92); }
+        .reconcile-item.muted { border-color: rgba(148,163,184,.18); background: rgba(248,250,252,.9); }
+        .reconcile-rule-id {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 48px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(59,130,246,.12);
+            color: #2563eb;
+            font-size: 12px;
+            font-weight: 800;
+            flex: 0 0 auto;
+        }
+        .reconcile-status {
+            font-size: 13px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        .sort-hint {
+            margin: -8px 0 12px;
+            color: #64748b;
+            font-size: 12px;
+            line-height: 1.5;
+            text-align: center;
+            padding: 8px 12px;
+            border-radius: 12px;
+            background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(239,246,255,.56));
+            border: 1px solid rgba(59,130,246,.10);
+        }
+        .drag-handle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 38px;
+            height: 38px;
+            min-width: 38px;
+            min-height: 38px;
+            margin-right: 8px;
+            border-radius: 13px;
+            color: #334155;
+            background: linear-gradient(145deg, #fdf2f8 0%, #e0f2fe 52%, #ede9fe 100%);
+            border: 1px solid rgba(99,102,241,.24);
+            box-shadow: 0 7px 18px rgba(79,70,229,.15), inset 0 1px 0 rgba(255,255,255,.96);
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            flex: 0 0 auto;
+            transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease, color .18s ease;
+        }
+        .drag-grip-lines {
+            display: grid;
+            gap: 3px;
+            width: 18px;
+            pointer-events: none;
+        }
+        .drag-grip-lines i {
+            display: block;
+            height: 2px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #ec4899, #6366f1 55%, #0ea5e9);
+            box-shadow: 0 1px 2px rgba(79,70,229,.18);
+            transition: width .18s ease, transform .18s ease;
+        }
+        .drag-grip-lines i:nth-child(2) { width: 14px; justify-self: center; }
+        .drag-handle:hover {
+            transform: translateY(-1px) scale(1.03);
+            color: #1d4ed8;
+            border-color: rgba(59,130,246,.5);
+            background: linear-gradient(145deg, #fce7f3, #dbeafe 52%, #ddd6fe);
+            box-shadow: 0 12px 25px rgba(79,70,229,.22), inset 0 1px 0 rgba(255,255,255,.98);
+        }
+        .drag-handle:hover .drag-grip-lines i:nth-child(2) { width: 18px; }
+        .drag-handle:active { cursor: grabbing; transform: scale(.94); }
+        .sortable-rule,
+        .sortable-server-row {
+            transition: transform .18s cubic-bezier(.22,.61,.36,1), box-shadow .18s ease, opacity .18s ease, filter .18s ease, background .18s ease;
+            will-change: transform;
+        }
+        .sortable-rule:hover,
+        .sortable-rule.drag-surface-active {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 26px rgba(59,130,246,.12);
+        }
+        #serversTable tbody .sortable-server-row:hover td {
+            box-shadow: 0 14px 26px rgba(59,130,246,.12);
+        }
+        .sortable-rule.drag-surface-active,
+        .sortable-server-row.drag-surface-active {
+            box-shadow: 0 0 0 2px rgba(59,130,246,.18), 0 18px 32px rgba(59,130,246,.12);
+        }
+        #serversTable tbody .sortable-server-row.drag-surface-active td {
+            background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(240,249,255,.90));
+        }
+        .sort-lifted {
+            transition: transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s ease, opacity .22s ease, filter .22s ease !important;
+            opacity: .9;
+            filter: saturate(.94);
+        }
+            transform: translateY(var(--sort-shift-y, -10px)) scale(var(--sort-shift-scale, .992));
+            box-shadow: 0 12px 24px rgba(59,130,246,.12);
+            opacity: .88;
+        }
+        .sort-shift-down {
+            transform: translateY(var(--sort-shift-y, 10px)) scale(var(--sort-shift-scale, .992));
+            box-shadow: 0 12px 24px rgba(59,130,246,.12);
+            opacity: .92;
+        }
+        #serversTable tbody .sortable-server-row:hover td,
+        #serversTable tbody .sortable-server-row.drag-surface-active td {
+            background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(240,249,255,.88));
+        }
+        .sorting-pending {
+            transition: none !important;
+            box-shadow: 0 0 0 2px rgba(59,130,246,.16);
+        }
+        .sorting-active {
+            opacity: .14;
+            transform: scale(.982);
+            filter: saturate(.78) blur(.2px);
+        }
+        .sorting-ghost {
+            position: fixed;
+            left: 0;
+            top: 0;
+            margin: 0;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: .995;
+            transform: translate3d(-9999px, -9999px, 0);
+            transform-origin: top left;
+            box-shadow: 0 30px 58px rgba(59,130,246,.28), 0 14px 22px rgba(15,23,42,.16) !important;
+            border: 1px solid rgba(59,130,246,.24);
+            border-radius: 16px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            overflow: hidden;
+            transition: transform .08s linear, box-shadow .18s ease, filter .18s ease;
+            filter: drop-shadow(0 10px 14px rgba(59,130,246,.08));
+        }
+        @media (max-width: 768px) {
+            .sorting-ghost {
+                box-shadow: 0 34px 64px rgba(59,130,246,.30), 0 18px 28px rgba(15,23,42,.18) !important;
+                filter: drop-shadow(0 14px 20px rgba(59,130,246,.14));
+                border-radius: 18px;
+            }
+        }
+        .sorting-ghost .drag-handle {
+            color: #1d4ed8;
+            border-color: rgba(59,130,246,.42);
+            box-shadow: 0 12px 24px rgba(59,130,246,.18), inset 0 1px 0 rgba(255,255,255,.98);
+        }
+        .sorting-placeholder {
+            position: relative;
+            border: 2px dashed rgba(59,130,246,.5) !important;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(59,130,246,.12), rgba(14,165,233,.07)) !important;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.62), 0 0 0 1px rgba(59,130,246,.06);
+            animation: sortingPlaceholderPulse 1.15s ease-in-out infinite;
+            transition: transform .22s cubic-bezier(.22,.61,.36,1), height .18s ease, margin .18s ease;
+            transform: scale(var(--placeholder-pop, 1));
+        }
+        .sorting-placeholder::after {
+            content: '拖到这里';
+            position: absolute;
+            inset: 50% auto auto 50%;
+            transform: translate(-50%, -50%);
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(255,255,255,.92);
+            color: #2563eb;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .04em;
+            box-shadow: 0 8px 20px rgba(59,130,246,.14);
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .sorting-placeholder > td {
+            padding: 0 !important;
+            height: inherit;
+            min-height: 56px;
+            background: transparent !important;
+            border-bottom: none !important;
+        }
+        .tree-rule.sorting-placeholder {
+            min-height: 132px;
+        }
+        .tree-server-rules.drag-sorting,
+        #serversTable tbody.drag-sorting,
+        body.dragging-sort-item {
+            cursor: grabbing;
+        }
+        @keyframes sortingPlaceholderPulse {
+            0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.62), 0 0 0 1px rgba(59,130,246,.06), 0 10px 24px rgba(59,130,246,.08); }
+            50% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.82), 0 0 0 1px rgba(59,130,246,.14), 0 14px 32px rgba(59,130,246,.16); }
+        }
+        .sorting-disabled .rule-drag-handle {
+            opacity: .28;
+            cursor: not-allowed;
+            touch-action: auto;
+        }
+        #serversTable td:first-child {
+            white-space: nowrap;
+        }
+        .tree-rule-traffic-wrap {
+            margin: 10px 14px 8px;
+            padding: 9px 11px 10px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(255,255,255,.76), rgba(239,246,255,.68));
+            border: 1px solid rgba(99,102,241,.12);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.88);
+        }
+        .tree-rule-traffic-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 6px;
+            color: #475569;
+            font-size: 11px;
+            line-height: 1.2;
+        }
+        .tree-rule-traffic-meta strong { color: #1f2937; font-size: 11px; }
+        .tree-rule-traffic-bar {
+            position: relative;
+            height: 10px;
+            background: linear-gradient(180deg, #e2e8f0, #f1f5f9);
+            border-radius: 999px;
+            overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(15,23,42,.12), 0 1px 0 rgba(255,255,255,.9);
+        }
+        .tree-rule-traffic-fill {
+            width: var(--rule-progress, 0%);
+            min-width: 5px;
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #22d3ee 0%, var(--rule-color, #6366f1) 48%, #f472b6 100%) !important;
+            box-shadow: 0 0 10px color-mix(in srgb, var(--rule-color, #6366f1) 55%, transparent);
+            transition: width .45s cubic-bezier(.22,.61,.36,1);
+        }
+        .tree-rule-traffic-fill::after {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(110deg, transparent 25%, rgba(255,255,255,.48) 45%, transparent 65%);
+            background-size: 44px 100%;
+            animation: ruleTrafficShimmer 2.4s linear infinite;
+        }
+        .tree-rule-traffic-bar.is-unlimited::after {
+            content: '∞';
+            position: absolute;
+            right: 5px;
+            top: 50%;
+            transform: translateY(-52%);
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+        }
+        @keyframes ruleTrafficShimmer { to { background-position: 44px 0; } }
+        .tree-rule-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; }
+        .tree-rule-actions button { padding: 6px 12px; font-size: 12px; }
+
+        /* 流量条颜色优化 */
+            .traffic-bar-fill {
+                background: linear-gradient(90deg, #4facfe 0%, #00f2fe 50%, #a8edea 100%) !important;
+            }
+        }
+
+        /* =====================================================================
+           专业主题覆盖层 (v2)
+           说明：以下规则统一重定义视觉层，覆盖上方旧的紫色玻璃拟物风格。
+           仅改外观，不改任何 DOM 结构与脚本行为；类名沿用原有定义。
+           ===================================================================== */
+        :root {
+            --primary-pink: #ffb3c6;
+            --primary-pink-strong: #ff85a1;
+            --secondary-blue: #a8dadc;
+            --secondary-blue-strong: #457b9d;
+            --accent-mint: #4ad66d;
+            --bg: #fff1f5;
+            --surface: rgba(255, 255, 255, 0.78);
+            --surface-2: rgba(255, 255, 255, 0.66);
+            --surface-3: rgba(255, 255, 255, 0.9);
+            --border: rgba(255, 179, 198, 0.26);
+            --border-strong: rgba(255, 179, 198, 0.42);
+            --text: #4a4a4a;
+            --text-2: #66545e;
+            --muted: #8d7b86;
+            --primary: #ff85a1;
+            --primary-hover: #ff6f91;
+            --primary-soft: rgba(255, 133, 161, 0.12);
+            --success: #35a56f;
+            --success-hover: #238657;
+            --danger: #ef476f;
+            --danger-hover: #df2f5a;
+            --amber: #d97706;
+            --radius: 22px;
+            --radius-sm: 14px;
+            --shadow-sm: 0 4px 12px rgba(255, 133, 161, 0.12);
+            --shadow: 0 18px 48px rgba(255, 179, 198, 0.18);
+        }
+
+        body {
+            background:
+                radial-gradient(1000px 580px at 8% -8%, rgba(255, 179, 198, 0.46), transparent 58%),
+                radial-gradient(920px 520px at 104% 4%, rgba(168, 218, 220, 0.40), transparent 56%),
+                linear-gradient(135deg, #ffe5ec 0%, #c9e4de 100%) !important;
+            background-attachment: fixed !important;
+            color: var(--text);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .sakura-container {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 9;
+            overflow: hidden;
+        }
+        .petal {
+            position: absolute;
+            top: -20px;
+            background: linear-gradient(135deg, rgba(255, 192, 203, 0.95), rgba(255, 179, 198, 0.72));
+            border-radius: 150% 0 150% 150%;
+            opacity: 0.82;
+            filter: blur(.15px);
+            animation: sakura-fall linear infinite;
+        }
+        @keyframes sakura-fall {
+            0% { transform: translateY(-16px) rotate(0deg) translateX(0); }
+            100% { transform: translateY(110vh) rotate(360deg) translateX(80px); }
+        }
+
+        .header-title, h1.header-title {
+            color: var(--primary-pink-strong);
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: .2px;
+            text-shadow: 1px 1px 2px rgba(255,255,255,.65);
+            display: flex; align-items: center; gap: 10px;
+        }
+
+        .page-header-row {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 18px 20px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            margin-bottom: 22px;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* 卡片 / 区块 */
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 24px 26px;
+            animation: none;
+            position: relative;
+            z-index: 10;
+        }
+        .section h2, .section > h2 {
+            color: var(--primary-pink-strong);
+            font-size: 18px;
+            font-weight: 800;
+            text-align: left;
+            justify-content: flex-start;
+            margin-bottom: 18px;
+            padding-left: 12px;
+            border-left: 3px solid var(--primary-pink-strong);
+            line-height: 1.3;
+        }
+        .section h2::before { content: none !important; margin: 0 !important; }
+
+        /* 按钮统一为扁平实色 + 清晰焦点环 */
+        button, .btn-primary, .btn-success, .btn-danger {
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 13px;
+            padding: 9px 16px;
+            cursor: pointer;
+            transition: background .15s ease, box-shadow .15s ease, transform .05s ease;
+            box-shadow: var(--shadow-sm);
+        }
+        button:active { transform: translateY(1px); }
+        button:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(79,70,229,.35);
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary-pink-strong) 0%, var(--primary-pink) 100%) !important; color: #172033 !important; }
+        .btn-primary:hover { background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-pink-strong) 100%) !important; }
+        .btn-success { background: linear-gradient(135deg, var(--secondary-blue) 0%, var(--secondary-blue-strong) 100%) !important; color: #172033 !important; }
+        .btn-success:hover { background: var(--success-hover) !important; }
+        .btn-danger { background: linear-gradient(135deg, #ff7b95 0%, var(--danger) 100%) !important; color: #172033 !important; }
+        .btn-danger:hover { background: var(--danger-hover) !important; }
+
+        /* 表单控件 */
+        input, select, textarea {
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 14px;
+            padding: 10px 12px;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79,70,229,.18);
+        }
+        .form-group label { color: var(--text-2); font-weight: 600; }
+
+        /* 表格 */
+        table { border-collapse: separate; border-spacing: 0; width: 100%; }
+        th {
+            background: rgba(255,255,255,0.62);
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: none;
+            letter-spacing: .3px;
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        td {
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.62);
+            color: var(--text-2);
+            font-size: 14px;
+            background: rgba(255,255,255,0.52);
+        }
+        tbody tr:hover td { background: rgba(255,255,255,0.88); }
+        tbody tr:last-child td { border-bottom: none; }
+        .table-wrap {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-x;
+            background: rgba(255,255,255,.35);
+        }
+
+        /* 状态标记 */
+        .status-online { color: var(--success) !important; font-weight: 700; }
+        .status-offline { color: var(--muted) !important; font-weight: 700; }
+        .status-token_invalid, .status-warning { color: var(--amber) !important; font-weight: 700; }
+        .status-error { color: var(--danger) !important; font-weight: 700; }
+
+        /* 弹窗 */
+        .modal { background: rgba(15,23,42,.55); backdrop-filter: blur(2px); }
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 24px 60px rgba(15,23,42,.30);
+            color: var(--text);
+        }
+        .modal-header { border-bottom: 1px solid var(--border); }
+        .modal-header h2 { color: var(--text); border-left: none; padding-left: 0; }
+        .close {
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border: 1px solid rgba(255,255,255,.12);
+            border-radius: 12px;
+            background: rgba(255,255,255,.08);
+            cursor: pointer;
+            font-size: 24px;
+            line-height: 1;
+            transition: transform .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+        .close:hover { color: var(--text); background: rgba(255,255,255,.16); transform: scale(1.03); }
+        .close:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(56,189,248,.32);
+        }
+
+        /* 树形服务器/规则列表 */
+        .tree-server { border: 1px solid rgba(255,255,255,.06); box-shadow: 0 10px 24px rgba(0,0,0,.22); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.02); }
+        .tree-server-header {
+            background: linear-gradient(135deg, rgba(59,130,246,.24) 0%, rgba(99,102,241,.16) 100%);
+            color: #e2e8f0;
+            border-bottom: 1px solid rgba(255,255,255,.06);
+            font-weight: 700;
+        }
+        .tree-server-header > input[type="checkbox"] {
+            margin-left: 14px;
+            flex: 0 0 auto;
+        }
+        .tree-server-icon { color: #38bdf8; text-shadow: none; }
+        .tree-server-count {
+            background: rgba(56,189,248,.12);
+            color: #7dd3fc;
+            font-weight: 700;
+        }
+        .tree-server-rules { background: rgba(255,255,255,.02); padding: 8px 4px; }
+        .tree-rule {
+            border-left: 3px solid #38bdf8;
+            box-shadow: 0 8px 18px rgba(0,0,0,.18);
+            border-radius: 12px;
+            background: rgba(255,255,255,.03);
+            color: #1f2937;
+            text-align: center;
+            width: 100%;
+            box-sizing: border-box;
+            padding-bottom: 18px;
+        }
+        .tree-rule-main,
+        .tree-rule-info,
+        .tree-rule-actions {
+            justify-content: flex-start;
+            text-align: left;
+            padding-left: 14px;
+        }
+        .tree-rule-main { margin-top: 4px; }
+        .tree-rule-target { flex: 1; color: #1f2937; text-align: left; }
+        .tree-rule-info { color: #374151; gap: 22px; margin-top: 12px; line-height: 1.6; }
+        .tree-rule-actions { justify-content: flex-start; margin-top: 2px; gap: 10px; }
+        .tree-rule:not(:last-child) { margin-bottom: 12px; }
+        .tree-rule-actions button { color: #172033; border: none; }
+        .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #f59e0b, #f97316); }
+        .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #3b82f6, #6366f1); }
+        .tree-rule-actions button:nth-child(3) { background: linear-gradient(135deg, #ef4444, #f43f5e); }
+        .tree-rule:hover { box-shadow: 0 12px 26px rgba(0,0,0,.22); }
+        .tree-rule-port { color: #38bdf8; }
+
+        /* 规则卡片（移动端） */
+        .rule-card {
+            background: rgba(255,255,255,.03);
+            border: 1px solid rgba(255,255,255,.06);
+            border-radius: 12px;
+            box-shadow: 0 8px 18px rgba(0,0,0,.18);
+        }
+        .rule-card-label { color: #94a3b8; }
+        .rule-card-value { color: #1f2937; }
+
+        /* 流量概览条；规则卡片内的进度条保留其独立彩色样式。 */
+        .traffic-bar {
+            background: var(--surface-3) !important;
+            border-radius: 999px;
+        }
+        .traffic-bar-fill {
+            background: linear-gradient(90deg, var(--primary) 0%, var(--success) 100%) !important;
+            border-radius: 999px;
+        }
+
+        /* 移动端底部栏 */
+        .mobile-bottom-bar {
+            background: rgba(255,255,255,.94);
+            border-top: 1px solid var(--border);
+            box-shadow: 0 -8px 26px rgba(0,0,0,.28);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            overscroll-behavior: contain;
+        }
+        .mobile-bottom-bar button { color: #1f2937; background: transparent; box-shadow: none; }
+        .modal { background: rgba(74,74,74,0.38); backdrop-filter: blur(8px); }
+        .modal-content {
+            background: #fff7fa;
+            border: 1px solid var(--border-strong);
+            box-shadow: 0 20px 50px rgba(74,74,74,0.28);
+        }
+        .modal-header { border-bottom: 1px solid var(--border); }
+        .modal-header h2 { color: #334155; }
+        .form-group label { color: #334155; }
+        small { color: #64748b; }
+        #bulkBar { border: 1px solid var(--border) !important; background: rgba(255,255,255,.72) !important; color: #1f2937; }
+
+        /* 顶部强制 HTTPS 开关与日志框收口 */
+        #logsContent { background: #f8fafc !important; border-color: #cbd5e1 !important; color: #1f2937; }
+        html, body { overscroll-behavior-y: auto; }
+        .container, .section, .modal-content { touch-action: pan-y; }
+        .table-wrap, #rulesTree, #rulesList, #auditContent, #logsContent, #diagResults { -webkit-overflow-scrolling: touch; }
+        a { color: #38bdf8; }
+
+        /* Telegram 选项固定为同一列：复选框占固定首列，文字占第二列。 */
+        .tg-options {
+            display: grid;
+            grid-template-columns: minmax(220px, max-content);
+            justify-content: center;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .tg-options label {
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr);
+            align-items: center;
+            column-gap: 8px;
+            margin: 0;
+            color: #334155;
+        }
+        .tg-options input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            justify-self: start;
+        }
+        .tg-options .tg-time-row { grid-template-columns: 92px 120px; }
+        .tg-options input[type="time"] { width: 120px; min-width: 120px; }
+
+        /* 最终按钮可读性：所有按钮使用彩色底和深色文字，禁止白底/白字。 */
+        button,
+        .btn-primary,
+        .btn-success,
+        .btn-danger,
+        .tree-rule-actions button,
+        .mobile-bottom-bar button,
+        .close {
+            color: #172033 !important;
+            border-color: rgba(23,32,51,.16) !important;
+            text-shadow: none !important;
+        }
+        button:not(.btn-primary):not(.btn-success):not(.btn-danger):not(.close) {
+            background: linear-gradient(135deg, #bae6fd, #c4b5fd) !important;
+        }
+        .btn-primary { background: linear-gradient(135deg, #f9a8d4, #c4b5fd) !important; }
+        .btn-success { background: linear-gradient(135deg, #99f6e4, #93c5fd) !important; }
+        .btn-danger { background: linear-gradient(135deg, #fda4af, #fdba74) !important; }
+        .tree-rule-actions button:nth-child(1) { background: linear-gradient(135deg, #fcd34d, #fb923c) !important; }
+        .tree-rule-actions button:nth-child(2) { background: linear-gradient(135deg, #93c5fd, #a5b4fc) !important; }
+        .tree-rule-actions button:nth-child(3) { background: linear-gradient(135deg, #fda4af, #fb7185) !important; }
+        .mobile-bottom-bar button { background: linear-gradient(135deg, #bae6fd, #c4b5fd) !important; }
+        .close { background: #fbcfe8 !important; }
+
+        /* 流量概览改为横向条形图后，画布按内容高度展示，移动端不横向溢出。 */
+        #trafficSummary { min-width: 0; overflow: hidden; }
+        #trafficChart { display: block; width: 100%; max-width: 100%; }
+
+        /* 最终拖拽把手样式同时覆盖桌面与手机；只有该控件可启动排序。 */
+        .drag-handle {
+            display: inline-flex !important;
+            align-items: center;
+            justify-content: center;
+            width: 38px;
+            height: 38px;
+            min-width: 38px;
+            min-height: 38px;
+            margin-right: 8px;
+            border-radius: 13px;
+            background: linear-gradient(145deg, #fdf2f8 0%, #e0f2fe 52%, #ede9fe 100%);
+            border: 1px solid rgba(99,102,241,.24);
+            box-shadow: 0 7px 18px rgba(79,70,229,.15), inset 0 1px 0 rgba(255,255,255,.96);
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            flex: 0 0 auto;
+        }
+        .drag-grip-lines { display:grid; gap:3px; width:18px; pointer-events:none; }
+        .drag-grip-lines i {
+            display:block;
+            height:2px;
+            border-radius:999px;
+            background:linear-gradient(90deg,#ec4899,#6366f1 55%,#0ea5e9);
+            box-shadow:0 1px 2px rgba(79,70,229,.18);
+            transition:width .18s ease;
+        }
+        .drag-grip-lines i:nth-child(2) { width:14px; justify-self:center; }
+        .drag-handle:hover {
+            transform:translateY(-1px) scale(1.03);
+            background:linear-gradient(145deg,#fce7f3,#dbeafe 52%,#ddd6fe);
+            border-color:rgba(59,130,246,.5);
+            box-shadow:0 12px 25px rgba(79,70,229,.22),inset 0 1px 0 rgba(255,255,255,.98);
+        }
+        .drag-handle:hover .drag-grip-lines i:nth-child(2) { width:18px; }
+        .drag-handle:active { cursor:grabbing; transform:scale(.94); }
+
+        /* 规则卡片最终布局：固定信息层级和8px节奏，避免内容随长度漂移。 */
+        .tree-server-rules { padding: 10px 6px; }
+        .tree-rule {
+            padding: 0 0 16px;
+            overflow: hidden;
+            border: 1px solid rgba(99,102,241,.12);
+            border-left-width: 4px;
+            border-radius: 15px;
+            background: linear-gradient(145deg, rgba(255,255,255,.78), rgba(248,250,252,.68));
+            box-shadow: 0 8px 22px rgba(51,65,85,.09), inset 0 1px 0 rgba(255,255,255,.92);
+        }
+        .tree-rule:not(:last-child) { margin-bottom: 12px; }
+        .tree-rule-main {
+            display: grid;
+            grid-template-columns: auto minmax(240px, 1fr) auto;
+            align-items: center;
+            gap: 14px;
+            margin: 0;
+            padding: 14px;
+            background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(248,250,252,.38));
+            border-bottom: 1px solid rgba(148,163,184,.14);
+            text-align: left;
+        }
+        .tree-rule-controls { display:flex; align-items:center; gap:9px; min-width:0; }
+        .tree-rule-controls input[type="checkbox"] { width:18px; height:18px; margin:0; flex:0 0 auto; }
+        .tree-rule-controls .drag-handle { margin-right:0; }
+        .tree-rule-id {
+            min-width:48px;
+            padding:5px 9px;
+            color:#334155;
+            background:rgba(224,231,255,.72);
+            border-color:rgba(99,102,241,.20);
+        }
+        .tree-rule-route { min-width:0; }
+        .tree-rule-route-label {
+            display:block;
+            margin-bottom:3px;
+            color:#64748b;
+            font-size:10px;
+            font-weight:700;
+            letter-spacing:.05em;
+        }
+        .tree-rule-route-value { display:flex; align-items:center; gap:8px; min-width:0; font-size:14px; line-height:1.4; }
+        .tree-rule-port { color:#4338ca; font-size:16px; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .tree-rule-arrow { color:#94a3b8; font-weight:700; flex:0 0 auto; }
+        .tree-rule-target { min-width:0; color:#1f2937; font-weight:650; overflow-wrap:anywhere; }
+        .tree-rule-status-group {
+            display:flex;
+            align-items:center;
+            justify-content:flex-end;
+            gap:6px;
+            margin:0;
+            min-width:132px;
+        }
+        .tree-rule-status { min-width:58px; text-align:center; box-sizing:border-box; }
+        .tree-rule-info {
+            display:grid;
+            grid-template-columns:repeat(4,minmax(0,1fr));
+            gap:8px;
+            margin:12px 14px 0;
+            padding:0;
+            color:#334155;
+            text-align:left;
+        }
+        .tree-rule-info-item {
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
+            min-width:0;
+            min-height:54px;
+            padding:8px 10px;
+            border:1px solid rgba(148,163,184,.14);
+            border-radius:10px;
+            background:rgba(255,255,255,.52);
+            box-sizing:border-box;
+        }
+        .tree-rule-info-item small { margin-bottom:3px; color:#64748b; font-size:10px; font-weight:650; line-height:1.2; }
+        .tree-rule-info-item strong { min-width:0; color:#334155; font-size:12px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+        .tree-rule-remark.is-wide { grid-column: span 2; }
+        .tree-rule-traffic-wrap { margin:10px 14px 0; }
+        .tree-rule-actions {
+            display:grid;
+            grid-template-columns:repeat(3,minmax(84px,112px));
+            justify-content:start;
+            gap:8px;
+            margin:10px 14px 0;
+            padding:0;
+        }
+        .tree-rule-actions button { width:100%; min-height:38px; margin:0; padding:8px 12px; border-radius:10px; }
+
+        /* 最终移动端覆盖：必须放在所有桌面默认规则之后，避免后置 #rulesList/.mobile-bottom-bar display:none 吞掉触控按钮。 */
+        @media (max-width: 768px) {
+            .tg-options {
+                width: min(100%, 280px);
+                grid-template-columns: minmax(0, 1fr);
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .tg-options label { width: 100%; }
+            .tg-options .tg-time-row { grid-template-columns: 92px 120px; }
+            #rulesTable { display: none; }
+            #rulesList { display: block; }
+            .mobile-bottom-bar { display: flex; }
+            .tree-server-rules.expanded { display: block; }
+            .tree-server-rules { padding: 8px 4px; }
+            .tree-rule { padding-bottom: 12px; border-radius: 14px; }
+            .tree-rule-main {
+                grid-template-columns: minmax(0, 1fr) auto;
+                grid-template-areas:
+                    "controls status"
+                    "route route";
+                align-items: center;
+                gap: 10px 8px;
+                padding: 12px;
+            }
+            .tree-rule-controls { grid-area: controls; gap: 8px; }
+            .tree-rule-route { grid-area: route; padding-top: 2px; }
+            .tree-rule-status-group {
+                grid-area: status;
+                width: auto;
+                min-width: 0;
+                justify-content: flex-end;
+                gap: 4px;
+            }
+            .tree-rule-status { min-width: 54px; padding: 3px 6px; font-size: 10px; }
+            .tree-rule-route-value { align-items: flex-start; gap: 7px; }
+            .tree-rule-target { flex: 1; min-width: 0; }
+            .drag-handle {
+                width: 44px;
+                height: 44px;
+                min-width: 44px;
+                min-height: 44px;
+                margin-right: 4px;
+            }
+            .server-drag-handle {
+                width: 40px;
+                height: 40px;
+                min-width: 40px;
+                min-height: 40px;
+            }
+            .sortable-rule,
+            .sortable-server-row {
+                touch-action: none;
+            }
+            .tree-rule-info {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 7px;
+                margin: 10px 10px 0;
+            }
+            .tree-rule-info-item { min-height: 52px; padding: 8px 9px; }
+            .tree-rule-remark { grid-column: 1 / -1; }
+            .tree-rule-traffic-wrap { margin: 9px 10px 0; padding: 9px 10px 10px; }
+            .tree-rule-actions {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 7px;
+                margin: 9px 10px 0;
+            }
+            .reconcile-item {
+                padding: 10px;
+                gap: 8px;
+            }
+            .reconcile-rule-id {
+                min-width: 44px;
+            }
+            .reconcile-status {
+                font-size: 12px;
+            }
+            .tree-rule-actions { display: grid; position: relative; z-index: 2; }
+            .tree-rule-actions button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                min-width: 0;
+                min-height: 44px;
+                margin: 0;
+                padding: 8px 4px;
+                pointer-events: auto;
+                touch-action: manipulation;
+            }
+            .tree-rule input[type="checkbox"],
+            .tree-server-header input[type="checkbox"],
+            .mobile-bottom-bar button {
+                pointer-events: auto;
+                touch-action: manipulation;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="sakura-container" id="sakuraContainer"></div>
+    <div class="container">
+        {% if must_change_password %}<div id="mustChangePasswordBanner" class="section" style="border:1px solid #f59e0b;border-left:3px solid #d97706;color:#92400e;font-weight:700;background:#fffbeb;">当前账号必须先修改密码后才能继续进行大部分管理操作。</div>{% endif %}
+        <div class="page-header-row">
+            <h1 class="header-title">SNAT 转发管理</h1>
+            <div class="header-actions">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:700;color:#1f2937;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;">
+                    <input type="checkbox" id="forceHttpsTop" data-change="saveForceHttpsTop" style="width:16px;height:16px;">
+                    强制 HTTPS
+                </label>
+                <button class="btn-primary" data-act="showSettingsModal">系统设置</button>
+                <button class="btn-primary" data-act="showChangePasswordModal">修改密码</button>
+                <button class="btn-danger" data-act="logout">登出</button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>服务器列表</h2>
+            <div class="sort-hint">仅按住彩色三横线按钮拖动服务器，点击或滑动其他区域不会改变顺序。</div>
+            <div style="text-align:center; margin-bottom: 10px;">
+                <button class="btn-primary" data-act="showAddServerModal">+ 添加服务器</button>
+            </div>
+            <div class="table-wrap"><table id="serversTable">
+                <thead>
+                    <tr>
+                        <th class="col-sort">排序</th>
+                        <th>编号</th>
+                        <th>名称</th>
+                        <th>地址</th>
+                        <th>端口</th>
+                        <th>状态</th>
+                        <th class="col-actions">操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table></div>
+        </div>
+
+        <div class="section" id="rulesSection">
+            <h2>转发规则 <span id="connectionsSummaryText" style="margin-left:12px;font-size:14px;color:#374151;">总活跃连接：0</span></h2>
+            <div class="sort-hint">手动排序时，仅按住彩色三横线按钮拖动；不会因触碰卡片而误移动，也不改变 TGBOT 规则编号。</div>
+            <div style="text-align:center; margin-bottom: 10px;">
+                <button class="btn-success" data-act="showAddRuleModal">+ 添加规则</button>
+                <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button>
+                <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button>
+                <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button>
+                <button class="btn-primary" data-act="renumberRules">整理编号</button>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                <input id="ruleSearch" type="search" data-input="setRuleFilter" placeholder="🔍 搜索规则（端口 / 目标 / 备注 / 服务器）" style="max-width:320px;display:inline-block;width:50%;">
+                <select id="ruleSortSelect" data-change="setRuleSortSelect" style="max-width:200px;display:inline-block;width:35%;">
+                    <option value="sort_order:asc" selected>手动排序（可拖动）</option>
+                    <option value="created_at:desc">按创建时间（新→旧）</option>
+                    <option value="created_at:asc">按创建时间（旧→新）</option>
+                    <option value="local_port:asc">按本地端口（小→大）</option>
+                    <option value="local_port:desc">按本地端口（大→小）</option>
+                    <option value="traffic_used_bytes:desc">按已用流量（多→少）</option>
+                    <option value="active_connections:desc">按活跃连接（多→少）</option>
+                    <option value="server_name:asc">按服务器名称（A→Z）</option>
+                </select>
+                <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><input type="checkbox" data-change="toggleAllRules" style="width:16px;height:16px;"> 全选</label>
+            </div>
+            <div id="bulkBar" style="display:none;margin:10px 0;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">已选择 <strong id="selectedCount">0</strong> 条规则 <button class="btn-primary" data-act="bulkAction" data-arg="enable">批量启用</button> <button class="btn-primary" data-act="bulkAction" data-arg="disable">批量禁用</button> <button class="btn-danger" data-act="bulkAction" data-arg="delete">批量删除</button></div>
+            <div id="reconcileResult" class="reconcile-result" aria-live="polite"></div>
+            <!-- 树形规则列表 -->
+            <div id="rulesTree"></div>
+        </div>
+
+        <div class="section"><h2>流量概览</h2><div id="trafficSummary" style="text-align:center;color:#555">加载中...</div></div>
+
+        
+        <div class="section">
+            <h2>告警与恢复</h2>
+            <div style="text-align:center; margin-bottom: 10px;">
+                <input id="tgBotToken" placeholder="Telegram Bot Token" style="max-width:320px;display:inline-block;width:40%">
+                <input id="tgChatId" placeholder="Telegram Chat ID" style="max-width:220px;display:inline-block;width:25%">
+                <input id="alertOfflineSeconds" type="number" value="300" style="max-width:120px;display:inline-block;width:20%">
+                <button class="btn-primary" data-act="saveAlertSettings">保存告警</button>
+                <button class="btn-success" data-act="testAlert">测试告警</button>
+                <button class="btn-primary" data-act="checkAlerts">检查告警</button>
+                <button class="btn-success" data-act="createSnapshot">创建快照</button>
+                <button class="btn-primary" data-act="loadSnapshots">刷新快照</button>
+                <button class="btn-primary" data-act="loadBackups">查看备份</button>
+            </div>
+            <div id="alertResult" style="margin:10px 0;color:#555"></div>
+            <div id="snapshotList" style="margin:10px 0;color:#555"></div>
+            <div style="font-size:12px;color:#666;margin:6px 0">测试告警=用 TG Bot 发一条测试消息；检查告警=立即检查离线/异常服务器并尝试通过 TG 发送；查看备份=查看当前备份列表并可恢复。</div><div id="backupList" style="margin:10px 0;color:#555"></div>
+            <div class="tg-options">
+                <label><input type="checkbox" id="tgCommandEnabled"> <span>启用 Telegram 命令</span></label>
+                <label><input type="checkbox" id="tgDailySummaryEnabled"> <span>启用每日汇总</span></label>
+                <label class="tg-time-row"><span>汇总时间</span><input type="time" id="tgDailySummaryTime" value="09:00"></label>
+                <label><input type="checkbox" id="tgAuditEnabled"> <span>推送审计消息</span></label>
+                <label><input type="checkbox" id="tgLimitAlertsEnabled"> <span>推送超限告警</span></label>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>导入导出与审计</h2>
+            <div style="text-align:center; margin-bottom: 10px;">
+                <button class="btn-primary" data-act="exportData" data-arg="servers">导出服务器</button>
+                <button class="btn-primary" data-act="exportData" data-arg="rules">导出规则</button>
+                <button class="btn-success" data-act="importJson" data-arg="servers">导入服务器(JSON)</button>
+                <button class="btn-success" data-act="importJson" data-arg="rules">导入规则(JSON)</button>
+                <button class="btn-primary" data-act="loadAuditLogs">加载审计日志</button>
+            </div>
+            <pre id="auditContent" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:#f7f8ff;border:1px solid #e6e8f0;border-radius:12px;padding:12px;font-size:12px;"></pre>
+        </div>
+
+        <div class="section">
+            <h2>系统设置</h2>
+            <div style="text-align:center; margin-bottom: 10px;">
+                <button class="btn-primary" data-act="showSettingsModal">系统设置</button>
+                <div id="bulkResult" style="margin-top:10px;color:#555"></div>
+                <button class="btn-success" data-act="showDiagModal">🔍 系统诊断</button>
+                <button class="btn-success" data-act="bulkCheckServers">批量检查服务器</button>
+                <button class="btn-primary" data-act="showLogsModal">📄 系统日志</button>
+                <button class="btn-success" data-act="reconcileRules">一致性检查</button>
+                <button class="btn-danger" data-act="reapplyRules">重新下发规则</button>
+            </div>
+        </div>
+
+        <!-- 移动端底部快捷操作栏 -->
+        <div class="mobile-bottom-bar">
+            <button class="btn-success" data-act="showAddRuleModal"><span>+</span>添加规则</button>
+            <button class="btn-primary" data-act="showAddServerModal"><span>+</span>添加服务器</button>
+            <button class="btn-primary" data-act="showDiagModal"><span>🔍</span>诊断</button>
+            <button class="btn-primary" data-act="bulkCheckServers"><span>✓</span>检查</button>
+            <button class="btn-danger" data-act="logout"><span>⏻</span>登出</button>
+        </div>
+    </div>
+
+    <!-- 添加服务器模态框 -->
+    <div id="addServerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加服务器</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="addServerModal" aria-label="关闭添加服务器弹窗">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>服务器名称</label>
+                <input type="hidden" id="serverEditId"><input type="text" id="serverName" placeholder="例如：Server-A">
+            </div>
+            <div class="form-group">
+                <label>服务器地址</label>
+                <input type="text" id="serverHost" placeholder="例如：192.168.1.100">
+            </div>
+            <div class="form-group">
+                <label>Agent 端口</label>
+                <input type="number" id="serverPort" value="8888">
+            </div>
+            <div class="form-group">
+                <label>Token</label>
+                <input type="text" id="serverToken" placeholder="Agent 的认证 Token">
+            </div>
+            <div class="modal-actions"><button class="btn-primary" data-act="addServer">添加</button></div>
+        </div>
+    </div>
+
+    <!-- 添加规则模态框 -->
+    <div id="addRuleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加转发规则</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="addRuleModal" aria-label="关闭添加规则弹窗">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>选择服务器</label>
+                <select id="ruleServer"></select>
+            </div>
+            <div class="form-group">
+                <label>本地端口</label>
+                <input type="number" id="ruleLocalPort" placeholder="例如：10000">
+            </div>
+            <div class="form-group">
+                <label>目标 IP</label>
+                <input type="text" id="ruleTargetIp" placeholder="例如：1.2.3.4">
+            </div>
+            <div class="form-group">
+                <label>目标端口</label>
+                <input type="number" id="ruleTargetPort" placeholder="例如：80">
+            </div>
+            <div class="form-group">
+                <label>备注</label>
+                <input type="text" id="ruleRemark" placeholder="例如：香港节点转发">
+            </div>
+            <div class="form-group">
+                <label>流量限制（GB，0表示不限制）</label>
+                <input type="number" id="ruleTrafficLimit" value="0" min="0" placeholder="例如：100">
+            </div>
+            <div class="modal-actions"><button class="btn-success" data-act="addRule">添加</button></div>
+        </div>
+    </div>
+
+    <!-- 编辑规则模态框 -->
+    <div id="editRuleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>编辑转发规则</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="editRuleModal" aria-label="关闭编辑规则弹窗">&times;</button>
+            </div>
+            <input type="hidden" id="editRuleId">
+            <div class="form-group">
+                <label>编号（列表/告警里显示的 ①②③，可改）</label>
+                <input type="number" id="editRuleNewId" min="1">
+            </div>
+            <div class="form-group">
+                <label>本地端口</label>
+                <input type="number" id="editRuleLocalPort">
+            </div>
+            <div class="form-group">
+                <label>目标 IP</label>
+                <input type="text" id="editRuleTargetIp">
+            </div>
+            <div class="form-group">
+                <label>目标端口</label>
+                <input type="number" id="editRuleTargetPort">
+            </div>
+            <div class="form-group">
+                <label>备注</label>
+                <input type="text" id="editRuleRemark">
+            </div>
+            <div class="form-group">
+                <label>流量限制（GB，0表示不限制）</label>
+                <input type="number" id="editRuleTrafficLimit" min="0">
+            </div>
+            <div class="modal-actions"><button class="btn-success" data-act="saveEditRule">保存</button></div>
+        </div>
+    </div>
+
+    <!-- 修改密码模态框 -->
+    <div id="changePasswordModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>修改密码</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="changePasswordModal" aria-label="关闭修改密码弹窗">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>原密码</label>
+                <input type="password" id="oldPassword">
+            </div>
+            <div class="form-group">
+                <label>新密码（至少8位）</label>
+                <input type="password" id="newPassword">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="confirmPassword">
+            </div>
+            <div class="modal-actions"><button class="btn-primary" data-act="changePassword">修改</button></div>
+        </div>
+    </div>
+
+    <!-- IP 白名单设置模态框 -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>系统设置</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="settingsModal" aria-label="关闭系统设置弹窗">&times;</button>
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="forceHttps" style="width:auto;margin-right:8px"> 强制 HTTPS</label>
+                <small style="color:#666;display:block;margin-top:6px">启用后，生产环境下非 HTTPS 请求会被拒绝；如使用反向代理，请确保传递 X-Forwarded-Proto。</small>
+            </div>
+            <div class="form-group">
+                <label>允许访问的 IP（每行一个，留空则不限制）</label>
+                <textarea id="ipWhitelist" rows="10" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;"></textarea>
+                <small style="color:#666;">示例：192.168.1.100 或 10.0.0.0/24</small>
+            </div>
+            <div class="modal-actions"><button class="btn-primary" data-act="saveSettings">保存</button></div>
+        </div>
+    </div>
+
+    <!-- 诊断模态框 -->
+    <div id="diagModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔍 系统诊断</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="diagModal" aria-label="关闭系统诊断弹窗">&times;</button>
+            </div>
+            <div id="diagResults" style="margin-top:20px"></div>
+        </div>
+    </div>
+
+    <!-- 日志模态框 -->
+    <div id="logsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📄 系统日志</h2>
+                <button type="button" class="close" data-act="closeModal" data-arg="logsModal" aria-label="关闭系统日志弹窗">&times;</button>
+            </div>
+            <div style="display:flex; gap:10px; margin-bottom:12px; justify-content:center;">
+                <button class="btn-primary" data-act="loadLogs">刷新</button>
+                <button class="btn-success" data-act="toggleAutoLogs" id="autoLogsBtn">自动刷新</button>
+            </div>
+            <pre id="logsContent" style="white-space:pre-wrap;max-height:420px;overflow:auto;background:#f7f8ff;border:1px solid #e6e8f0;border-radius:12px;padding:12px;font-size:12px;"></pre>
+        </div>
+    </div>
+
+    <!-- 主逻辑：显式带 nonce，避免在某些严格 CSP / 浏览器自动化环境中被误拦截，确保 data-act 事件委托脚本稳定加载。 -->
+    <script src="/static/app.js?v=6" nonce="{{ csp_nonce }}"></script>
+
+    <!-- 移动端键盘检测 & PWA meta -->
+    <script nonce="{{ csp_nonce }}">
+    (function(){
+        const createSakura = () => {
+            const container = document.getElementById('sakuraContainer');
+            if (!container || container.childElementCount) return;
+            for (let i = 0; i < 28; i++) {
+                const petal = document.createElement('div');
+                petal.className = 'petal';
+                const size = Math.random() * 10 + 8;
+                petal.style.width = `${size}px`;
+                petal.style.height = `${size}px`;
+                petal.style.left = `${Math.random() * 100}vw`;
+                petal.style.animationDelay = `${Math.random() * 8}s`;
+                petal.style.animationDuration = `${Math.random() * 6 + 7}s`;
+                container.appendChild(petal);
+            }
+        };
+
+        createSakura();
+
+        // 检测虚拟键盘弹出，隐藏底部栏
+        const vp = document.querySelector('meta[name="viewport"]');
+        if (vp && !vp.content.includes('viewport-fit=cover')) {
+            vp.content = vp.content.replace('width=device-width', 'width=device-width, viewport-fit=cover');
+        }
+        
+        // iOS 键盘检测：使用初始可视高度做基线，避免直接拿 window.innerHeight 造成误判
+        const visualViewport = window.visualViewport;
+        if (visualViewport) {
+            let baseViewportHeight = Math.max(visualViewport.height, window.innerHeight || 0);
+            const syncKeyboardState = () => {
+                baseViewportHeight = Math.max(baseViewportHeight, visualViewport.height);
+                const keyboardOpen = visualViewport.height < (baseViewportHeight - 120);
+                document.body.classList.toggle('keyboard-open', keyboardOpen);
+            };
+            visualViewport.addEventListener('resize', syncKeyboardState);
+            window.addEventListener('orientationchange', () => {
+                baseViewportHeight = Math.max(visualViewport.height, window.innerHeight || 0);
+                syncKeyboardState();
+            });
+            syncKeyboardState();
+        }
+    })();
+    </script>
+</body>
+</html>
